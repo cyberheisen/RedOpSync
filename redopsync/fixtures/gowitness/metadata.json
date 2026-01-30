@@ -1,0 +1,9 @@
+{
+  "screenshots": [
+    {
+      "file": "shot1.png",
+      "url": "http://192.0.2.10:80/",
+      "title": "Home"
+    }
+  ]
+}
