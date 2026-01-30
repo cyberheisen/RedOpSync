@@ -1,0 +1,81 @@
+from uuid import UUID
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+
+from app.db.session import get_db
+from app.models.models import Host, Project, Subnet
+from app.schemas.host import HostCreate, HostUpdate, HostRead
+
+router = APIRouter()
+
+
+@router.get("", response_model=list[HostRead])
+def list_hosts(
+    project_id: UUID | None = Query(None),
+    subnet_id: UUID | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    q = db.query(Host)
+    if project_id is not None:
+        q = q.filter(Host.project_id == project_id)
+    if subnet_id is not None:
+        q = q.filter(Host.subnet_id == subnet_id)
+    return q.order_by(Host.ip).all()
+
+
+@router.post("", response_model=HostRead, status_code=201)
+def create_host(body: HostCreate, db: Session = Depends(get_db)):
+    project = db.query(Project).filter(Project.id == body.project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if body.subnet_id:
+        subnet = db.query(Subnet).filter(Subnet.id == body.subnet_id).first()
+        if not subnet or subnet.project_id != body.project_id:
+            raise HTTPException(status_code=404, detail="Subnet not found or not in project")
+    host = Host(
+        project_id=body.project_id,
+        subnet_id=body.subnet_id,
+        ip=body.ip,
+        dns_name=body.dns_name,
+        tags=list(body.tags) if body.tags else None,
+        status=body.status or "unknown",
+    )
+    db.add(host)
+    db.commit()
+    db.refresh(host)
+    return host
+
+
+@router.get("/{host_id}", response_model=HostRead)
+def get_host(host_id: UUID, db: Session = Depends(get_db)):
+    host = db.query(Host).filter(Host.id == host_id).first()
+    if not host:
+        raise HTTPException(status_code=404, detail="Host not found")
+    return host
+
+
+@router.patch("/{host_id}", response_model=HostRead)
+def update_host(host_id: UUID, body: HostUpdate, db: Session = Depends(get_db)):
+    host = db.query(Host).filter(Host.id == host_id).first()
+    if not host:
+        raise HTTPException(status_code=404, detail="Host not found")
+    data = body.model_dump(exclude_unset=True)
+    if "subnet_id" in data and data["subnet_id"] is not None:
+        subnet = db.query(Subnet).filter(Subnet.id == data["subnet_id"]).first()
+        if not subnet or subnet.project_id != host.project_id:
+            raise HTTPException(status_code=400, detail="Subnet not found or not in project")
+    for k, v in data.items():
+        setattr(host, k, v)
+    db.commit()
+    db.refresh(host)
+    return host
+
+
+@router.delete("/{host_id}", status_code=204)
+def delete_host(host_id: UUID, db: Session = Depends(get_db)):
+    host = db.query(Host).filter(Host.id == host_id).first()
+    if not host:
+        raise HTTPException(status_code=404, detail="Host not found")
+    db.delete(host)
+    db.commit()
+    return None
