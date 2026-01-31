@@ -2,8 +2,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.core.deps import get_current_user
 from app.db.session import get_db
-from app.models.models import Subnet, Project
+from app.models.models import Subnet, Project, User
 from app.schemas.subnet import SubnetCreate, SubnetUpdate, SubnetRead
 
 router = APIRouter()
@@ -13,6 +14,7 @@ router = APIRouter()
 def list_subnets(
     project_id: UUID | None = Query(None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     q = db.query(Subnet)
     if project_id is not None:
@@ -21,7 +23,11 @@ def list_subnets(
 
 
 @router.post("", response_model=SubnetRead, status_code=201)
-def create_subnet(body: SubnetCreate, db: Session = Depends(get_db)):
+def create_subnet(
+    body: SubnetCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     project = db.query(Project).filter(Project.id == body.project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -37,7 +43,11 @@ def create_subnet(body: SubnetCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/{subnet_id}", response_model=SubnetRead)
-def get_subnet(subnet_id: UUID, db: Session = Depends(get_db)):
+def get_subnet(
+    subnet_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     subnet = db.query(Subnet).filter(Subnet.id == subnet_id).first()
     if not subnet:
         raise HTTPException(status_code=404, detail="Subnet not found")
@@ -45,7 +55,12 @@ def get_subnet(subnet_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.patch("/{subnet_id}", response_model=SubnetRead)
-def update_subnet(subnet_id: UUID, body: SubnetUpdate, db: Session = Depends(get_db)):
+def update_subnet(
+    subnet_id: UUID,
+    body: SubnetUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     subnet = db.query(Subnet).filter(Subnet.id == subnet_id).first()
     if not subnet:
         raise HTTPException(status_code=404, detail="Subnet not found")
@@ -58,7 +73,11 @@ def update_subnet(subnet_id: UUID, body: SubnetUpdate, db: Session = Depends(get
 
 
 @router.delete("/{subnet_id}", status_code=204)
-def delete_subnet(subnet_id: UUID, db: Session = Depends(get_db)):
+def delete_subnet(
+    subnet_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     subnet = db.query(Subnet).filter(Subnet.id == subnet_id).first()
     if not subnet:
         raise HTTPException(status_code=404, detail="Subnet not found")

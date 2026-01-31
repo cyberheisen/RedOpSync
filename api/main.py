@@ -11,6 +11,13 @@ from app.api.routes import router as api_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.db.session import SessionLocal
+    from app.db.seed import seed_admin
+    db = SessionLocal()
+    try:
+        seed_admin(db)
+    finally:
+        db.close()
     yield
     engine.dispose()
 

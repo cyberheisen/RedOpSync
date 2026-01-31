@@ -10,4 +10,14 @@ from main import app
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    from app.db.session import SessionLocal
+    from app.db.seed import seed_admin
+    db = SessionLocal()
+    try:
+        seed_admin(db)
+    finally:
+        db.close()
+    tc = TestClient(app)
+    r = tc.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+    assert r.status_code == 200, r.text
+    return tc

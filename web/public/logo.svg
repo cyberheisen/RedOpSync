@@ -1,0 +1,66 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 920 180"
+  role="img"
+  aria-label="RedOpSync logo"
+>
+  <defs>
+    <style>
+      .white { fill: #ffffff; }
+      .red { fill: #e10600; }
+    </style>
+  </defs>
+
+  <!-- RedOp -->
+  <text
+    x="0"
+    y="130"
+    class="white"
+    font-family="Arial Black, Impact, system-ui, sans-serif"
+    font-size="120"
+    letter-spacing="-2"
+  >
+    Red
+  </text>
+
+  <text
+    x="230"
+    y="130"
+    class="red"
+    font-family="Arial Black, Impact, system-ui, sans-serif"
+    font-size="120"
+    letter-spacing="-2"
+  >
+    Op
+  </text>
+
+  <!-- Weaponized S (custom path) -->
+  <path
+    class="red"
+    d="
+      M430 40
+      C500 20, 560 30, 560 60
+      C560 85, 520 90, 480 95
+      C430 105, 420 120, 420 135
+      C420 165, 500 165, 580 145
+      L570 165
+      C480 190, 390 175, 390 135
+      C390 105, 420 85, 480 80
+      C520 75, 530 65, 530 55
+      C530 35, 480 35, 430 55
+      Z
+    "
+  />
+
+  <!-- ync -->
+  <text
+    x="585"
+    y="130"
+    class="white"
+    font-family="Arial Black, Impact, system-ui, sans-serif"
+    font-size="120"
+    letter-spacing="-2"
+  >
+    ync
+  </text>
+</svg>

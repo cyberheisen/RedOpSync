@@ -22,21 +22,19 @@ docker compose up --build
 The API runs `alembic upgrade head` on startup, then serves on port 8000.
 
 3) Open:
-- Web: http://localhost:3000
+- Web: http://localhost:3000 (redirects to login; default **admin** / **admin**)
 - API health: http://localhost:8000/health
 - API docs: http://localhost:8000/docs
 
-## Verify (step 1: DB + CRUD)
-- **Health**: `curl -s http://localhost:8000/health` → `{"status":"ok",...}`
-- **Projects CRUD**: Create a project, list, get, patch, delete:
-  ```bash
-  curl -s -X POST http://localhost:8000/api/projects -H "Content-Type: application/json" -d '{"name":"Test","countdown_red_days_default":7}'
-  ```
+## Verify (DB + CRUD + Auth)
+- **Health** (no auth): `curl -s http://localhost:8000/health` → `{"status":"ok",...}`
+- **Login**: `curl -s -X POST http://localhost:8000/api/auth/login -H "Content-Type: application/json" -d '{"username":"admin","password":"admin"}' -c cookies.txt` then use `-b cookies.txt` for protected endpoints.
+- **Projects CRUD** (requires auth cookie): create project, list, get, patch, delete.
 - **API tests** (require Postgres with migrations; run from repo root):
   ```bash
-  docker compose run --rm api pytest tests/test_health.py tests/test_crud.py -v
+  docker-compose run --rm api pytest tests/test_health.py tests/test_auth.py tests/test_crud.py -v
   ```
-  Or locally with Postgres and env: `cd api && alembic upgrade head && pytest tests/ -v`
+  Or locally: `cd api && alembic upgrade head && pytest tests/ -v`
 
 ## Notes
 See `docs/` for architecture and next steps.

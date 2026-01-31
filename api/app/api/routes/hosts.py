@@ -2,8 +2,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.core.deps import get_current_user
 from app.db.session import get_db
-from app.models.models import Host, Project, Subnet
+from app.models.models import Host, Project, Subnet, User
 from app.schemas.host import HostCreate, HostUpdate, HostRead
 
 router = APIRouter()
@@ -14,6 +15,7 @@ def list_hosts(
     project_id: UUID | None = Query(None),
     subnet_id: UUID | None = Query(None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     q = db.query(Host)
     if project_id is not None:
@@ -24,7 +26,11 @@ def list_hosts(
 
 
 @router.post("", response_model=HostRead, status_code=201)
-def create_host(body: HostCreate, db: Session = Depends(get_db)):
+def create_host(
+    body: HostCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     project = db.query(Project).filter(Project.id == body.project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -47,7 +53,11 @@ def create_host(body: HostCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/{host_id}", response_model=HostRead)
-def get_host(host_id: UUID, db: Session = Depends(get_db)):
+def get_host(
+    host_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     host = db.query(Host).filter(Host.id == host_id).first()
     if not host:
         raise HTTPException(status_code=404, detail="Host not found")
@@ -55,7 +65,12 @@ def get_host(host_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.patch("/{host_id}", response_model=HostRead)
-def update_host(host_id: UUID, body: HostUpdate, db: Session = Depends(get_db)):
+def update_host(
+    host_id: UUID,
+    body: HostUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     host = db.query(Host).filter(Host.id == host_id).first()
     if not host:
         raise HTTPException(status_code=404, detail="Host not found")
@@ -72,7 +87,11 @@ def update_host(host_id: UUID, body: HostUpdate, db: Session = Depends(get_db)):
 
 
 @router.delete("/{host_id}", status_code=204)
-def delete_host(host_id: UUID, db: Session = Depends(get_db)):
+def delete_host(
+    host_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     host = db.query(Host).filter(Host.id == host_id).first()
     if not host:
         raise HTTPException(status_code=404, detail="Host not found")

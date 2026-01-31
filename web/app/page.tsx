@@ -1,5 +1,5 @@
 async function getHealth() {
-  const base = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+  const base = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
   try {
     const res = await fetch(`${base}/health`, { cache: "no-store" });
     return await res.json();
@@ -12,8 +12,10 @@ export default async function Home() {
   const health = await getHealth();
   return (
     <main style={{ padding: 24 }}>
-      <h1 style={{ margin: 0 }}>RedOpSync</h1>
-      <p style={{ marginTop: 8, color: "#444" }}>
+      <h1 style={{ margin: 0, backgroundColor: "#1a202c", padding: "16px 24px", borderRadius: 8 }}>
+        <img src="/logo.svg" alt="RedOpSync" height={56} style={{ display: "block", width: "auto" }} />
+      </h1>
+      <p style={{ marginTop: 16, color: "#444" }}>
         Starter scaffold UI. Tree navigation, locking, imports, and tool execution are not implemented yet.
       </p>
       <div style={{ marginTop: 16, padding: 12, border: "1px solid #ddd", borderRadius: 8 }}>
