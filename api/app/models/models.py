@@ -144,6 +144,8 @@ class VulnerabilityInstance(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    definition = relationship("VulnerabilityDefinition", backref="instances")
+
 
 class Evidence(Base):
     __tablename__ = "evidence"
@@ -191,6 +193,8 @@ class Lock(Base):
     locked_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     locked_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     expires_at = Column(DateTime(timezone=True), nullable=False)
+
+    locked_by = relationship("User", backref="locks")
 
 
 class AuditEvent(Base):

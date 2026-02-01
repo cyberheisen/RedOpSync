@@ -31,7 +31,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   if (!ready) {
     return (
-      <div style={{ padding: 24, textAlign: "center" }}>Checking auth…</div>
+      <div style={{ padding: 24, textAlign: "center", color: "var(--text-muted)" }}>Checking auth…</div>
     );
   }
   return <>{children}</>;

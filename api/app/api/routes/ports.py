@@ -2,10 +2,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from fastapi import status
+
 from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.models.models import Port, Host, User
 from app.schemas.port import PortCreate, PortUpdate, PortRead
+from app.services.lock import require_lock
 
 router = APIRouter()
 
@@ -82,6 +85,10 @@ def update_port(
     port = db.query(Port).filter(Port.id == port_id).first()
     if not port:
         raise HTTPException(status_code=404, detail="Port not found")
+    try:
+        require_lock(db, port.host.project_id, "port", port_id, current_user)
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     data = body.model_dump(exclude_unset=True)
     for k, v in data.items():
         setattr(port, k, v)
@@ -99,6 +106,10 @@ def delete_port(
     port = db.query(Port).filter(Port.id == port_id).first()
     if not port:
         raise HTTPException(status_code=404, detail="Port not found")
+    try:
+        require_lock(db, port.host.project_id, "port", port_id, current_user)
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     db.delete(port)
     db.commit()
     return None

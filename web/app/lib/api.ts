@@ -14,3 +14,10 @@ export function apiUrl(path: string): string {
   const base = getApiBase();
   return base ? `${base.replace(/\/$/, "")}${p}` : p;
 }
+
+export function wsUrl(path: string): string {
+  const base = getApiBase();
+  const wsBase = base.replace(/^http/, "ws");
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${wsBase.replace(/\/$/, "")}${p}`;
+}

@@ -33,19 +33,13 @@ export function UserMenu() {
     router.replace("/login");
   }
 
-  if (loading) return <span style={{ color: "#a0aec0", fontSize: 14 }}>…</span>;
+  if (loading) return <span style={{ color: "var(--text-muted)", fontSize: 14 }}>…</span>;
   if (!user) {
     return (
       <Link
         href="/login"
-        style={{
-          color: "#fff",
-          fontSize: 14,
-          textDecoration: "none",
-          padding: "6px 12px",
-          border: "1px solid #fff",
-          borderRadius: 4,
-        }}
+        className="theme-btn theme-btn-primary"
+        style={{ fontSize: 14, padding: "6px 12px", textDecoration: "none" }}
       >
         Log in
       </Link>
@@ -53,20 +47,8 @@ export function UserMenu() {
   }
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-      <span style={{ color: "#e2e8f0", fontSize: 14 }}>{user.username}</span>
-      <button
-        type="button"
-        onClick={handleLogout}
-        style={{
-          background: "transparent",
-          color: "#e2e8f0",
-          border: "1px solid #e2e8f0",
-          borderRadius: 4,
-          padding: "6px 12px",
-          fontSize: 14,
-          cursor: "pointer",
-        }}
-      >
+      <span style={{ color: "var(--text)", fontSize: 14 }}>{user.username}</span>
+      <button type="button" onClick={handleLogout} className="theme-btn theme-btn-ghost" style={{ padding: "6px 12px", fontSize: 14 }}>
         Log out
       </button>
     </div>

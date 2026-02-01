@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
     jwt_expire_hours: int = Field(default=24, alias="JWT_EXPIRE_HOURS")
     admin_password: str = Field(default="admin", alias="ADMIN_PASSWORD")
+    lock_ttl_seconds: int = Field(default=120, alias="LOCK_TTL_SECONDS")
 
     @property
     def cors_origins_list(self):

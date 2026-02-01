@@ -2,10 +2,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from fastapi import status
+
 from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.models.models import Host, Project, Subnet, User
 from app.schemas.host import HostCreate, HostUpdate, HostRead
+from app.services.lock import require_lock
 
 router = APIRouter()
 
@@ -74,6 +77,10 @@ def update_host(
     host = db.query(Host).filter(Host.id == host_id).first()
     if not host:
         raise HTTPException(status_code=404, detail="Host not found")
+    try:
+        require_lock(db, host.project_id, "host", host_id, current_user)
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     data = body.model_dump(exclude_unset=True)
     if "subnet_id" in data and data["subnet_id"] is not None:
         subnet = db.query(Subnet).filter(Subnet.id == data["subnet_id"]).first()
@@ -95,6 +102,10 @@ def delete_host(
     host = db.query(Host).filter(Host.id == host_id).first()
     if not host:
         raise HTTPException(status_code=404, detail="Host not found")
+    try:
+        require_lock(db, host.project_id, "host", host_id, current_user)
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     db.delete(host)
     db.commit()
     return None

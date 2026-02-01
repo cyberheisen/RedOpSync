@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Logo } from "../components/logo";
 import { apiUrl } from "../lib/api";
 
 export default function LoginPage() {
@@ -45,31 +46,20 @@ export default function LoginPage() {
         padding: 24,
         maxWidth: 400,
         margin: "48px auto",
-        backgroundColor: "#1a202c",
+        backgroundColor: "var(--bg-panel)",
         borderRadius: 8,
-        color: "#e2e8f0",
+        color: "var(--text)",
+        border: "1px solid var(--border)",
       }}
     >
+      <Logo variant="auth" />
       <h1 style={{ margin: "0 0 24px", fontSize: "1.5rem" }}>Log in</h1>
       <form onSubmit={handleSubmit}>
         {error && (
-          <p
-            style={{
-              color: "#fc8181",
-              fontSize: 14,
-              marginBottom: 16,
-            }}
-          >
-            {error}
-          </p>
+          <p style={{ color: "var(--error)", fontSize: 14, marginBottom: 16 }}>{error}</p>
         )}
         <div style={{ marginBottom: 16 }}>
-          <label
-            htmlFor="username"
-            style={{ display: "block", marginBottom: 6, fontSize: 14 }}
-          >
-            Username
-          </label>
+          <label htmlFor="username" style={{ display: "block", marginBottom: 6, fontSize: 14 }}>Username</label>
           <input
             id="username"
             type="text"
@@ -77,25 +67,12 @@ export default function LoginPage() {
             onChange={(e) => setUsername(e.target.value)}
             required
             autoComplete="username"
-            style={{
-              width: "100%",
-              padding: "8px 12px",
-              fontSize: 16,
-              border: "1px solid #4a5568",
-              borderRadius: 4,
-              backgroundColor: "#2d3748",
-              color: "#e2e8f0",
-              boxSizing: "border-box",
-            }}
+            className="theme-input"
+            style={{ fontSize: 16 }}
           />
         </div>
         <div style={{ marginBottom: 24 }}>
-          <label
-            htmlFor="password"
-            style={{ display: "block", marginBottom: 6, fontSize: 14 }}
-          >
-            Password
-          </label>
+          <label htmlFor="password" style={{ display: "block", marginBottom: 6, fontSize: 14 }}>Password</label>
           <input
             id="password"
             type="password"
@@ -103,32 +80,15 @@ export default function LoginPage() {
             onChange={(e) => setPassword(e.target.value)}
             required
             autoComplete="current-password"
-            style={{
-              width: "100%",
-              padding: "8px 12px",
-              fontSize: 16,
-              border: "1px solid #4a5568",
-              borderRadius: 4,
-              backgroundColor: "#2d3748",
-              color: "#e2e8f0",
-              boxSizing: "border-box",
-            }}
+            className="theme-input"
+            style={{ fontSize: 16 }}
           />
         </div>
         <button
           type="submit"
           disabled={loading}
-          style={{
-            width: "100%",
-            padding: "10px 16px",
-            fontSize: 16,
-            fontWeight: 600,
-            color: "#1a202c",
-            backgroundColor: "#e2e8f0",
-            border: "none",
-            borderRadius: 4,
-            cursor: loading ? "not-allowed" : "pointer",
-          }}
+          className="theme-btn theme-btn-primary"
+          style={{ width: "100%", padding: "10px 16px", fontSize: 16, fontWeight: 600 }}
         >
           {loading ? "Logging in…" : "Log in"}
         </button>

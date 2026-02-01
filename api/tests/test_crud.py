@@ -5,51 +5,7 @@ Requires Postgres running with migrations applied (e.g. docker compose up -d pos
 import pytest
 
 
-@pytest.fixture
-def project_id(client):
-    r = client.post(
-        "/api/projects",
-        json={
-            "name": "Test Project",
-            "description": "For CRUD tests",
-            "countdown_red_days_default": 7,
-        },
-    )
-    assert r.status_code == 201, r.text
-    return r.json()["id"]
-
-
-@pytest.fixture
-def subnet_id(client, project_id: str):
-    r = client.post(
-        "/api/subnets",
-        json={
-            "project_id": project_id,
-            "cidr": "10.0.0.0/24",
-            "name": "Test subnet",
-        },
-    )
-    assert r.status_code == 201, r.text
-    return r.json()["id"]
-
-
-@pytest.fixture
-def host_id(client, project_id: str, subnet_id: str):
-    r = client.post(
-        "/api/hosts",
-        json={
-            "project_id": project_id,
-            "subnet_id": subnet_id,
-            "ip": "10.0.0.1",
-            "dns_name": "testhost.local",
-            "status": "up",
-        },
-    )
-    assert r.status_code == 201, r.text
-    return r.json()["id"]
-
-
-def test_projects_crud(client, project_id: str):
+def test_projects_crud(client, project_id):
     r = client.get("/api/projects")
     assert r.status_code == 200
     projects = r.json()
@@ -83,6 +39,12 @@ def test_subnets_crud(client, project_id: str, subnet_id: str):
     assert r.status_code == 200
     assert r.json()["cidr"] == "10.0.0.0/24"
 
+    lock = client.post(
+        "/api/locks",
+        json={"project_id": project_id, "record_type": "subnet", "record_id": subnet_id},
+    )
+    assert lock.status_code == 201
+
     r = client.patch(f"/api/subnets/{subnet_id}", json={"name": "Updated subnet"})
     assert r.status_code == 200
     assert r.json()["name"] == "Updated subnet"
@@ -99,8 +61,18 @@ def test_hosts_crud(client, project_id: str, subnet_id: str, host_id: str):
     assert r.status_code == 200
     assert r.json()["ip"] == "10.0.0.1"
 
+    lock = client.post(
+        "/api/locks",
+        json={"project_id": project_id, "record_type": "host", "record_id": host_id},
+    )
+    assert lock.status_code == 201
 
-def test_ports_crud(client, host_id: str):
+    r = client.patch(f"/api/hosts/{host_id}", json={"ip": "10.0.0.2"})
+    assert r.status_code == 200
+    assert r.json()["ip"] == "10.0.0.2"
+
+
+def test_ports_crud(client, project_id: str, host_id: str):
     r = client.post(
         "/api/ports",
         json={
@@ -124,6 +96,12 @@ def test_ports_crud(client, host_id: str):
     r = client.get(f"/api/ports/{port_id}")
     assert r.status_code == 200
     assert r.json()["number"] == 80
+
+    lock = client.post(
+        "/api/locks",
+        json={"project_id": project_id, "record_type": "port", "record_id": port_id},
+    )
+    assert lock.status_code == 201
 
     r = client.patch(f"/api/ports/{port_id}", json={"service_version": "1.1"})
     assert r.status_code == 200
