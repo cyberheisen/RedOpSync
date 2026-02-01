@@ -4,8 +4,7 @@ import { useState, useRef } from "react";
 
 export type ImportHostsContext =
   | { type: "scope" }
-  | { type: "subnet"; id: string; cidr: string; name: string | null }
-  | { type: "host"; hostId: string; ip: string };
+  | { type: "subnet"; id: string; cidr: string; name: string | null };
 
 type Props = {
   context: ImportHostsContext;
@@ -32,9 +31,7 @@ export function ImportHostsModal({ context, onClose, onSuccess }: Props) {
   const subtext =
     context.type === "scope"
       ? "Importing into Scope"
-      : context.type === "subnet"
-        ? `Importing into Subnet: ${context.cidr}${context.name ? ` (${context.name})` : ""}`
-        : `Importing for host ${context.ip}`;
+      : `Importing into Subnet: ${context.cidr}${context.name ? ` (${context.name})` : ""}`;
 
   const getInputSize = () => {
     if (activeTab === "paste") {

@@ -24,14 +24,26 @@ body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-s
 .theme-select option{background:var(--bg-panel);color:var(--text)}
 .theme-link{color:var(--accent);text-decoration:none}
 .theme-link:hover{text-decoration:underline}
-a[href^="/projects/"]{transition:background .15s,border-color .15s}
-a[href^="/projects/"]:hover{background:var(--tree-hover)!important;border-color:var(--accent-dim)!important}
+a[href^="/missions/"]{transition:background .15s,border-color .15s}
+a[href^="/missions/"]:hover{background:var(--tree-hover)!important;border-color:var(--accent-dim)!important}
 .theme-tree-node{display:flex;align-items:center;gap:6px;padding:4px 8px;cursor:pointer;min-height:24px;border-left:3px solid transparent;transition:background .1s}
 .theme-tree-node:hover{background:var(--tree-hover)}
 .theme-tree-node.selected{background:var(--tree-selected-bg);border-left-color:var(--tree-selected-border)}
 .theme-lock{background:var(--lock-bg);border:1px solid var(--lock-border);color:var(--accent)}
 .theme-badge{padding:2px 8px;font-size:11px;border-radius:4px;border:1px solid var(--border);color:var(--text-muted)}
 .theme-badge-critical,.theme-badge-high{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
+.note-markdown-content h1,.note-markdown-content h2,.note-markdown-content h3{margin:1em 0 .5em;font-weight:600}
+.note-markdown-content h1{font-size:1.25rem}.note-markdown-content h2{font-size:1.1rem}.note-markdown-content h3{font-size:1rem}
+.note-markdown-content pre,.note-markdown-content code{background:var(--bg-panel);border-radius:4px;font-family:ui-monospace,monospace;font-size:13px}
+.note-markdown-content pre{padding:12px;overflow-x:auto;margin:.5em 0}
+.note-markdown-content code{padding:2px 6px}
+.note-markdown-content pre code{padding:0}
+.note-markdown-content ul{margin:.5em 0;padding-left:1.5em}
+.note-markdown-content a{color:var(--accent);text-decoration:none}
+.note-markdown-content a:hover{text-decoration:underline}
+.note-markdown-preview h1,.note-markdown-preview h2,.note-markdown-preview h3{margin:.5em 0}
+.note-markdown-preview pre,.note-markdown-preview code{background:var(--bg-panel);border-radius:4px;font-size:12px}
+.note-markdown-preview ul{padding-left:1.5em}
 `;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
