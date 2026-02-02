@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiUrl, formatApiErrorDetail } from "../../lib/api";
 import { Toast } from "../../components/toast";
 
 type User = {
@@ -11,20 +12,29 @@ type User = {
   disabled_at: string | null;
 };
 
-// Mock data for users
-const mockUsers: User[] = [
-  { id: "1", username: "admin", role: "admin", created_at: "2025-01-15T10:00:00Z", disabled_at: null },
-  { id: "2", username: "jsmith", role: "operator", created_at: "2025-01-20T14:30:00Z", disabled_at: null },
-  { id: "3", username: "olduser", role: "operator", created_at: "2025-01-10T09:00:00Z", disabled_at: "2025-01-25T16:00:00Z" },
-];
-
 export default function AdminUsersPage() {
-  const [users, setUsers] = useState<User[]>(mockUsers);
-  const [loading, setLoading] = useState(false);
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [createModal, setCreateModal] = useState(false);
+  const [editModal, setEditModal] = useState<User | null>(null);
   const [deleteModal, setDeleteModal] = useState<User | null>(null);
   const [resetPasswordModal, setResetPasswordModal] = useState<User | null>(null);
+
+  useEffect(() => {
+    fetch(apiUrl("/api/auth/me"), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setCurrentUserId(d.id));
+  }, []);
+
+  useEffect(() => {
+    fetch(apiUrl("/api/admin/users"), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setUsers)
+      .catch(() => setUsers([]))
+      .finally(() => setLoading(false));
+  }, [createModal, editModal, deleteModal, resetPasswordModal]);
 
   useEffect(() => {
     if (!toast) return;
@@ -32,41 +42,103 @@ export default function AdminUsersPage() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  const handleCreate = async (username: string, password: string, role: string) => {
-    // Stub: would call API
-    const newUser: User = {
-      id: String(Date.now()),
-      username,
-      role,
-      created_at: new Date().toISOString(),
-      disabled_at: null,
-    };
-    setUsers((prev) => [...prev, newUser]);
-    setCreateModal(false);
-    setToast(`User "${username}" created (stub)`);
+  const loadUsers = () => {
+    fetch(apiUrl("/api/admin/users"), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setUsers);
   };
 
-  const handleToggleDisable = (user: User) => {
-    setUsers((prev) =>
-      prev.map((u) =>
-        u.id === user.id
-          ? { ...u, disabled_at: u.disabled_at ? null : new Date().toISOString() }
-          : u
-      )
-    );
+  const handleCreate = async (username: string, password: string, role: string) => {
+    const res = await fetch(apiUrl("/api/admin/users"), {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password, role }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setToast(formatApiErrorDetail(data.detail, "Failed to create user"));
+      return;
+    }
+    setCreateModal(false);
+    loadUsers();
+    setToast(`User "${username}" created`);
+  };
+
+  const handleToggleDisable = async (user: User) => {
+    const endpoint = user.disabled_at ? "enable" : "disable";
+    const res = await fetch(apiUrl(`/api/admin/users/${user.id}/${endpoint}`), {
+      method: "POST",
+      credentials: "include",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setToast(formatApiErrorDetail(data.detail, "Action failed"));
+      return;
+    }
+    loadUsers();
     setToast(user.disabled_at ? `User "${user.username}" enabled` : `User "${user.username}" disabled`);
   };
 
-  const handleResetPassword = (user: User) => {
+  const handleResetPassword = async (user: User, temporaryPassword: string) => {
+    const res = await fetch(apiUrl(`/api/admin/users/${user.id}/reset-password`), {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ temporary_password: temporaryPassword }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setToast(formatApiErrorDetail(data.detail, "Reset failed"));
+      return;
+    }
     setResetPasswordModal(null);
-    setToast(`Password reset for "${user.username}" (stub)`);
+    loadUsers();
+    setToast(`Password reset for "${user.username}"`);
   };
 
-  const handleDelete = (user: User) => {
-    setUsers((prev) => prev.filter((u) => u.id !== user.id));
-    setDeleteModal(null);
-    setToast(`User "${user.username}" deleted (stub)`);
+  const handleUpdate = async (user: User, username: string, password: string, role: string) => {
+    const body: { username: string; password?: string; role: string } = {
+      username: username.trim(),
+      role: role,
+    };
+    if (password && password.length >= 8) body.password = password;
+    const res = await fetch(apiUrl(`/api/admin/users/${user.id}`), {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setToast(formatApiErrorDetail(data.detail, "Update failed"));
+      return;
+    }
+    setEditModal(null);
+    loadUsers();
+    setToast(`User "${username.trim() || user.username}" updated`);
   };
+
+  const handleDelete = async (user: User) => {
+    const res = await fetch(apiUrl(`/api/admin/users/${user.id}`), {
+      method: "DELETE",
+      credentials: "include",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setToast(formatApiErrorDetail(data.detail, "Delete failed"));
+      return;
+    }
+    setDeleteModal(null);
+    loadUsers();
+    setToast(`User "${user.username}" deleted`);
+  };
+
+  if (loading) {
+    return (
+      <div style={{ padding: 32, color: "var(--text-muted)" }}>Loading users…</div>
+    );
+  }
 
   return (
     <div style={{ padding: 32 }}>
@@ -106,7 +178,20 @@ export default function AdminUsersPage() {
           </thead>
           <tbody>
             {users.map((user) => (
-              <tr key={user.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+              <tr
+                key={user.id}
+                style={{
+                  borderBottom: "1px solid var(--border-subtle)",
+                  cursor: "pointer",
+                }}
+                onClick={() => setEditModal(user)}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = "var(--tree-hover)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "";
+                }}
+              >
                 <td style={{ padding: "12px 16px", fontWeight: 500 }}>{user.username}</td>
                 <td style={{ padding: "12px 16px" }}>
                   <span
@@ -119,7 +204,7 @@ export default function AdminUsersPage() {
                       border: `1px solid ${user.role === "admin" ? "var(--accent-dim)" : "var(--border)"}`,
                     }}
                   >
-                    {user.role}
+                    {user.role === "user" ? "operator" : user.role}
                   </span>
                 </td>
                 <td style={{ padding: "12px 16px" }}>
@@ -132,13 +217,15 @@ export default function AdminUsersPage() {
                 <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>
                   {new Date(user.created_at).toLocaleDateString()}
                 </td>
-                <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                <td style={{ padding: "12px 16px", textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
                   <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                     <button
                       type="button"
                       className="theme-btn theme-btn-ghost"
                       style={{ padding: "4px 10px", fontSize: 12 }}
                       onClick={() => handleToggleDisable(user)}
+                      disabled={user.role === "admin"}
+                      title={user.role === "admin" ? "Admin accounts cannot be disabled" : undefined}
                     >
                       {user.disabled_at ? "Enable" : "Disable"}
                     </button>
@@ -155,7 +242,7 @@ export default function AdminUsersPage() {
                       className="theme-btn theme-btn-ghost"
                       style={{ padding: "4px 10px", fontSize: 12, color: "var(--error)" }}
                       onClick={() => setDeleteModal(user)}
-                      disabled={user.username === "admin"}
+                      disabled={user.id === currentUserId}
                     >
                       Delete
                     </button>
@@ -166,6 +253,15 @@ export default function AdminUsersPage() {
           </tbody>
         </table>
       </div>
+
+      {/* Edit User Modal */}
+      {editModal && (
+        <EditUserModal
+          user={editModal}
+          onClose={() => setEditModal(null)}
+          onSave={(username, password, role) => handleUpdate(editModal, username, password, role)}
+        />
+      )}
 
       {/* Create User Modal */}
       {createModal && (
@@ -180,7 +276,7 @@ export default function AdminUsersPage() {
         <ResetPasswordModal
           user={resetPasswordModal}
           onClose={() => setResetPasswordModal(null)}
-          onConfirm={() => handleResetPassword(resetPasswordModal)}
+          onConfirm={(pw) => handleResetPassword(resetPasswordModal, pw)}
         />
       )}
 
@@ -194,6 +290,98 @@ export default function AdminUsersPage() {
       )}
 
       {toast && <Toast message={toast} />}
+    </div>
+  );
+}
+
+function EditUserModal({
+  user,
+  onClose,
+  onSave,
+}: {
+  user: User;
+  onClose: () => void;
+  onSave: (username: string, password: string, role: string) => void;
+}) {
+  const [username, setUsername] = useState(user.username);
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState(user.role === "user" ? "operator" : "admin");
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!username.trim()) return;
+    if (password && password.length < 8) return;
+    onSave(username.trim(), password, role);
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        backgroundColor: "rgba(0,0,0,0.6)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          backgroundColor: "var(--bg-panel)",
+          borderRadius: 8,
+          border: "1px solid var(--border)",
+          padding: 24,
+          maxWidth: 400,
+          width: "90%",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 style={{ margin: "0 0 16px", fontSize: "1.25rem" }}>Edit User</h2>
+        <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: "block", marginBottom: 4, fontSize: 14 }}>Username</label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+              className="theme-input"
+              placeholder="e.g. jsmith"
+            />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: "block", marginBottom: 4, fontSize: 14 }}>New password (leave blank to keep current)</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="theme-input"
+              placeholder="Min 8 characters"
+            />
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", marginBottom: 4, fontSize: 14 }}>Role</label>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              className="theme-select"
+            >
+              <option value="operator">Operator</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button type="button" className="theme-btn theme-btn-ghost" onClick={onClose}>
+              Cancel
+            </button>
+            <button type="submit" className="theme-btn theme-btn-primary">
+              Save Changes
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
@@ -295,8 +483,15 @@ function ResetPasswordModal({
 }: {
   user: User;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: (temporaryPassword: string) => void;
 }) {
+  const [password, setPassword] = useState("");
+
+  const handleSubmit = () => {
+    if (!password || password.length < 8) return;
+    onConfirm(password);
+  };
+
   return (
     <div
       style={{
@@ -322,14 +517,30 @@ function ResetPasswordModal({
         onClick={(e) => e.stopPropagation()}
       >
         <h2 style={{ margin: "0 0 12px", fontSize: "1.25rem" }}>Reset Password</h2>
-        <p style={{ margin: "0 0 20px", color: "var(--text-muted)", fontSize: 14 }}>
-          Reset password for user <strong>{user.username}</strong>? A new temporary password will be generated.
+        <p style={{ margin: "0 0 16px", color: "var(--text-muted)", fontSize: 14 }}>
+          Set a new temporary password for user <strong>{user.username}</strong>.
         </p>
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: "block", marginBottom: 4, fontSize: 14 }}>Temporary Password</label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            minLength={8}
+            className="theme-input"
+            placeholder="Min 8 characters"
+          />
+        </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button type="button" className="theme-btn theme-btn-ghost" onClick={onClose}>
             Cancel
           </button>
-          <button type="button" className="theme-btn theme-btn-primary" onClick={onConfirm}>
+          <button
+            type="button"
+            className="theme-btn theme-btn-primary"
+            onClick={handleSubmit}
+            disabled={!password || password.length < 8}
+          >
             Reset Password
           </button>
         </div>

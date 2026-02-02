@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 class LockCreate(BaseModel):
     project_id: UUID
-    record_type: str = Field(..., pattern="^(host|port|subnet|note|vulnerability_instance)$")
+    record_type: str = Field(..., pattern="^(host|port|subnet|note|vulnerability_instance|vulnerability_definition)$")
     record_id: UUID
 
 

@@ -1,33 +1,37 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiUrl } from "../../lib/api";
 import { Toast } from "../../components/toast";
 
 type ImportExportRecord = {
   id: string;
   type: "import" | "export";
   project_name: string;
-  status: "completed" | "in_progress" | "failed";
+  status: "completed" | "in_progress" | "failed" | "pending";
   created_at: string;
   file_name: string;
   user: string;
 };
 
-// Mock data
-const mockRecords: ImportExportRecord[] = [
-  { id: "1", type: "export", project_name: "Acme Corp Engagement", status: "completed", created_at: new Date(Date.now() - 3600000).toISOString(), file_name: "acme-corp-2025-01-30.zip", user: "admin" },
-  { id: "2", type: "import", project_name: "Beta Test Project", status: "completed", created_at: new Date(Date.now() - 7200000).toISOString(), file_name: "beta-import.zip", user: "jsmith" },
-  { id: "3", type: "export", project_name: "Client X Pentest", status: "in_progress", created_at: new Date(Date.now() - 600000).toISOString(), file_name: "client-x-export.zip", user: "admin" },
-  { id: "4", type: "import", project_name: "Old Project", status: "failed", created_at: new Date(Date.now() - 86400000).toISOString(), file_name: "corrupted-file.zip", user: "jsmith" },
-];
-
 export default function AdminImportsExportsPage() {
-  const [records, setRecords] = useState<ImportExportRecord[]>(mockRecords);
+  const [records, setRecords] = useState<ImportExportRecord[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [bulkExportModal, setBulkExportModal] = useState(false);
   const [bulkImportModal, setBulkImportModal] = useState(false);
   const [validateModal, setValidateModal] = useState(false);
   const [filter, setFilter] = useState<"all" | "import" | "export">("all");
+  const [loading, setLoading] = useState(true);
+  const [validateFile, setValidateFile] = useState<File | null>(null);
+  const [importFile, setImportFile] = useState<File | null>(null);
+
+  useEffect(() => {
+    fetch(apiUrl("/api/admin/import-export"), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setRecords(Array.isArray(data) ? data : []))
+      .catch(() => setRecords([]))
+      .finally(() => setLoading(false));
+  }, []);
 
   useEffect(() => {
     if (!toast) return;
@@ -35,21 +39,68 @@ export default function AdminImportsExportsPage() {
     return () => clearTimeout(t);
   }, [toast]);
 
+  const loadJobs = () => {
+    fetch(apiUrl("/api/admin/import-export"), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setRecords(Array.isArray(data) ? data : []));
+  };
+
   const filteredRecords = filter === "all" ? records : records.filter((r) => r.type === filter);
 
-  const handleBulkExport = () => {
+  const handleBulkExport = async () => {
+    const res = await fetch(apiUrl("/api/admin/import-export/export"), {
+      method: "POST",
+      credentials: "include",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setToast(data.detail ?? "Export failed");
+      return;
+    }
     setBulkExportModal(false);
-    setToast("Bulk export started (stub)");
+    loadJobs();
+    setToast("Export started");
   };
 
-  const handleBulkImport = () => {
+  const handleBulkImport = async () => {
+    if (!importFile) {
+      setToast("Select a file first");
+      return;
+    }
+    const fd = new FormData();
+    fd.append("file", importFile);
+    const res = await fetch(apiUrl("/api/admin/import-export/import"), {
+      method: "POST",
+      credentials: "include",
+      body: fd,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setToast(data.detail ?? "Import failed");
+      return;
+    }
     setBulkImportModal(false);
-    setToast("Bulk import started (stub)");
+    setImportFile(null);
+    loadJobs();
+    setToast("Import started");
   };
 
-  const handleValidate = () => {
+  const handleValidate = async () => {
+    if (!validateFile) {
+      setToast("Select a file first");
+      return;
+    }
+    const fd = new FormData();
+    fd.append("file", validateFile);
+    const res = await fetch(apiUrl("/api/admin/import-export/validate"), {
+      method: "POST",
+      credentials: "include",
+      body: fd,
+    });
+    const data = await res.json().catch(() => ({}));
     setValidateModal(false);
-    setToast("Import validation complete (stub)");
+    setValidateFile(null);
+    setToast(data.valid ? "Archive is valid" : `Invalid: ${data.error ?? "Unknown error"}`);
   };
 
   const formatTimeAgo = (isoDate: string) => {
@@ -66,6 +117,7 @@ export default function AdminImportsExportsPage() {
   const statusColors: Record<string, { bg: string; color: string; border: string }> = {
     completed: { bg: "rgba(72, 187, 120, 0.1)", color: "#48bb78", border: "rgba(72, 187, 120, 0.3)" },
     in_progress: { bg: "rgba(236, 201, 75, 0.1)", color: "#ecc94b", border: "rgba(236, 201, 75, 0.3)" },
+    pending: { bg: "rgba(160, 174, 192, 0.1)", color: "#a0aec0", border: "rgba(160, 174, 192, 0.3)" },
     failed: { bg: "var(--error-bg)", color: "var(--error)", border: "var(--accent-dim)" },
   };
 
@@ -138,7 +190,13 @@ export default function AdminImportsExportsPage() {
             </tr>
           </thead>
           <tbody>
-            {filteredRecords.length === 0 ? (
+            {loading ? (
+              <tr>
+                <td colSpan={6} style={{ padding: "24px 16px", textAlign: "center", color: "var(--text-muted)" }}>
+                  Loading…
+                </td>
+              </tr>
+            ) : filteredRecords.length === 0 ? (
               <tr>
                 <td colSpan={6} style={{ padding: "24px 16px", textAlign: "center", color: "var(--text-muted)" }}>
                   No records found
@@ -173,9 +231,9 @@ export default function AdminImportsExportsPage() {
                         padding: "2px 8px",
                         borderRadius: 4,
                         fontSize: 11,
-                        backgroundColor: statusColors[record.status].bg,
-                        color: statusColors[record.status].color,
-                        border: `1px solid ${statusColors[record.status].border}`,
+                        backgroundColor: (statusColors[record.status] ?? statusColors.pending).bg,
+                        color: (statusColors[record.status] ?? statusColors.pending).color,
+                        border: `1px solid ${(statusColors[record.status] ?? statusColors.pending).border}`,
                       }}
                     >
                       {record.status.replace("_", " ")}
@@ -259,20 +317,28 @@ export default function AdminImportsExportsPage() {
             <p style={{ margin: "0 0 16px", color: "var(--text-muted)", fontSize: 14 }}>
               Import projects from an archive file (.zip).
             </p>
-            <div
+            <label
               style={{
+                display: "block",
                 padding: 24,
                 border: "2px dashed var(--border)",
                 borderRadius: 8,
                 textAlign: "center",
                 color: "var(--text-muted)",
                 marginBottom: 16,
+                cursor: "pointer",
               }}
             >
-              Drop file here or click to browse
-            </div>
+              <input
+                type="file"
+                accept=".zip"
+                style={{ display: "none" }}
+                onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+              />
+              {importFile ? importFile.name : "Drop file here or click to browse"}
+            </label>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button type="button" className="theme-btn theme-btn-ghost" onClick={() => setBulkImportModal(false)}>
+              <button type="button" className="theme-btn theme-btn-ghost" onClick={() => { setBulkImportModal(false); setImportFile(null); }}>
                 Cancel
               </button>
               <button type="button" className="theme-btn theme-btn-primary" onClick={handleBulkImport}>
@@ -312,23 +378,31 @@ export default function AdminImportsExportsPage() {
             <p style={{ margin: "0 0 16px", color: "var(--text-muted)", fontSize: 14 }}>
               Validate an import archive without actually importing data.
             </p>
-            <div
+            <label
               style={{
+                display: "block",
                 padding: 24,
                 border: "2px dashed var(--border)",
                 borderRadius: 8,
                 textAlign: "center",
                 color: "var(--text-muted)",
                 marginBottom: 16,
+                cursor: "pointer",
               }}
             >
-              Drop file here or click to browse
-            </div>
+              <input
+                type="file"
+                accept=".zip"
+                style={{ display: "none" }}
+                onChange={(e) => setValidateFile(e.target.files?.[0] ?? null)}
+              />
+              {validateFile ? validateFile.name : "Drop file here or click to browse"}
+            </label>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button type="button" className="theme-btn theme-btn-ghost" onClick={() => setValidateModal(false)}>
+              <button type="button" className="theme-btn theme-btn-ghost" onClick={() => { setValidateModal(false); setValidateFile(null); }}>
                 Cancel
               </button>
-              <button type="button" className="theme-btn theme-btn-primary" onClick={handleValidate}>
+              <button type="button" className="theme-btn theme-btn-primary" onClick={handleValidate} disabled={!validateFile}>
                 Validate
               </button>
             </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiUrl } from "../../lib/api";
 import { Toast } from "../../components/toast";
 
 type Session = {
@@ -11,15 +12,8 @@ type Session = {
   created_at: string;
 };
 
-// Mock sessions
-const mockSessions: Session[] = [
-  { id: "1", user: "admin", ip: "192.168.1.100", last_activity: new Date(Date.now() - 60000).toISOString(), created_at: new Date(Date.now() - 3600000).toISOString() },
-  { id: "2", user: "jsmith", ip: "192.168.1.101", last_activity: new Date(Date.now() - 300000).toISOString(), created_at: new Date(Date.now() - 7200000).toISOString() },
-  { id: "3", user: "operator1", ip: "10.0.0.50", last_activity: new Date(Date.now() - 1800000).toISOString(), created_at: new Date(Date.now() - 14400000).toISOString() },
-];
-
 export default function AdminSystemPage() {
-  const [sessions, setSessions] = useState<Session[]>(mockSessions);
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [confirmModal, setConfirmModal] = useState<{
     title: string;
@@ -27,12 +21,38 @@ export default function AdminSystemPage() {
     confirmText: string;
     action: () => void;
   } | null>(null);
+  const [stats, setStats] = useState<{ database_size_mb: number; total_records: number; uptime: string; api_requests_24h: number } | null>(null);
+  const [currentUsername, setCurrentUsername] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(apiUrl("/api/auth/me"), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setCurrentUsername(d.username));
+  }, []);
+
+  useEffect(() => {
+    fetch(apiUrl("/api/admin/system/sessions"), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setSessions);
+    fetch(apiUrl("/api/admin/system/stats"), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setStats);
+  }, [confirmModal]);
 
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 2500);
     return () => clearTimeout(t);
   }, [toast]);
+
+  const reload = () => {
+    fetch(apiUrl("/api/admin/system/sessions"), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setSessions);
+    fetch(apiUrl("/api/admin/system/stats"), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setStats);
+  };
 
   const formatTimeAgo = (isoDate: string) => {
     const diff = Date.now() - new Date(isoDate).getTime();
@@ -48,9 +68,15 @@ export default function AdminSystemPage() {
       title: "Cleanup Orphaned Records",
       message: "This will scan the database and remove orphaned records (hosts without projects, ports without hosts, etc.). This operation may take several minutes.",
       confirmText: "Run Cleanup",
-      action: () => {
+      action: async () => {
+        const res = await fetch(apiUrl("/api/admin/system/cleanup-orphans"), { method: "POST", credentials: "include" });
         setConfirmModal(null);
-        setToast("Orphan cleanup started (stub)");
+        if (res.ok) {
+          reload();
+          setToast("Orphan cleanup completed");
+        } else {
+          setToast("Cleanup failed");
+        }
       },
     });
   };
@@ -60,9 +86,16 @@ export default function AdminSystemPage() {
       title: "Vacuum / Optimize Database",
       message: "This will run database maintenance to reclaim storage and optimize performance. The database may be temporarily slow during this operation.",
       confirmText: "Run Vacuum",
-      action: () => {
+      action: async () => {
+        const res = await fetch(apiUrl("/api/admin/system/vacuum"), { method: "POST", credentials: "include" });
         setConfirmModal(null);
-        setToast("Database vacuum started (stub)");
+        if (res.ok) {
+          reload();
+          setToast("Database vacuum completed");
+        } else {
+          const d = await res.json().catch(() => ({}));
+          setToast(d.detail ?? "Vacuum failed");
+        }
       },
     });
   };
@@ -72,17 +105,28 @@ export default function AdminSystemPage() {
       title: "Force Logout All Users",
       message: "This will immediately invalidate all user sessions except your own. All users will need to log in again.",
       confirmText: "Logout All",
-      action: () => {
-        setSessions((prev) => prev.filter((s) => s.user === "admin"));
+      action: async () => {
+        const res = await fetch(apiUrl("/api/admin/system/force-logout-all"), { method: "POST", credentials: "include" });
         setConfirmModal(null);
-        setToast("All users logged out");
+        if (res.ok) {
+          reload();
+          setToast("All users logged out");
+        } else {
+          setToast("Failed to logout users");
+        }
       },
     });
   };
 
-  const handleTerminateSession = (session: Session) => {
-    setSessions((prev) => prev.filter((s) => s.id !== session.id));
-    setToast(`Session for ${session.user} terminated`);
+  const handleTerminateSession = async (session: Session) => {
+    const res = await fetch(apiUrl(`/api/admin/system/sessions/${session.id}/terminate`), { method: "POST", credentials: "include" });
+    if (res.ok) {
+      reload();
+      setToast(`Session for ${session.user} terminated`);
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setToast(d.detail ?? "Failed to terminate session");
+    }
   };
 
   return (
@@ -186,7 +230,7 @@ export default function AdminSystemPage() {
                   <tr key={session.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
                     <td style={{ padding: "12px 16px", fontWeight: 500 }}>
                       {session.user}
-                      {session.user === "admin" && (
+                      {session.user === currentUsername && (
                         <span style={{ marginLeft: 8, fontSize: 11, color: "var(--accent)" }}>(you)</span>
                       )}
                     </td>
@@ -201,7 +245,7 @@ export default function AdminSystemPage() {
                         className="theme-btn theme-btn-ghost"
                         style={{ padding: "4px 10px", fontSize: 12, color: "var(--error)" }}
                         onClick={() => handleTerminateSession(session)}
-                        disabled={session.user === "admin"}
+                        disabled={session.user === currentUsername}
                       >
                         Terminate
                       </button>
@@ -214,7 +258,7 @@ export default function AdminSystemPage() {
         </div>
       </section>
 
-      {/* System Stats (Mock) */}
+      {/* System Stats */}
       <section style={{ marginTop: 32 }}>
         <h2 style={{ margin: "0 0 16px", fontSize: "1.125rem", color: "var(--text-muted)" }}>
           System Stats
@@ -227,10 +271,10 @@ export default function AdminSystemPage() {
           }}
         >
           {[
-            { label: "Database Size", value: "1.2 GB" },
-            { label: "Total Records", value: "45,231" },
-            { label: "Uptime", value: "14d 6h 32m" },
-            { label: "API Requests (24h)", value: "12,847" },
+            { label: "Database Size", value: stats ? `${stats.database_size_mb} MB` : "—" },
+            { label: "Total Records", value: stats ? stats.total_records.toLocaleString() : "—" },
+            { label: "Uptime", value: stats?.uptime ?? "—" },
+            { label: "API Requests (24h)", value: stats ? stats.api_requests_24h.toLocaleString() : "—" },
           ].map((stat) => (
             <div
               key={stat.label}

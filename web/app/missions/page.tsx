@@ -55,6 +55,13 @@ export default function MissionsPage() {
   const [setDatesModal, setSetDatesModal] = useState<Mission | null>(null);
   const [deleteMissionModal, setDeleteMissionModal] = useState<Mission | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    fetch(apiUrl("/api/auth/me"), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setIsAdmin(d.role === "admin"));
+  }, []);
 
   const loadMissions = useCallback(() => {
     fetch(apiUrl("/api/projects"), { credentials: "include" })
@@ -145,11 +152,17 @@ export default function MissionsPage() {
         method: "DELETE",
         credentials: "include",
       });
-      if (!res.ok) throw new Error("Failed to delete");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const msg = Array.isArray(data.detail) ? (data.detail as { msg?: string }[]).map((d) => d.msg || "").join("; ") : typeof data.detail === "string" ? data.detail : "Delete failed (admin only)";
+        setToast(msg);
+        return;
+      }
       setDeleteMissionModal(null);
       loadMissions();
+      setToast("Mission deleted");
     } catch {
-      setToast("Delete failed (stub)");
+      setToast("Delete failed");
     }
   };
 
@@ -191,14 +204,16 @@ export default function MissionsPage() {
         }}
       >
         <h1 style={{ margin: 0, fontSize: "1.5rem" }}>Missions</h1>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button type="button" onClick={() => setAddMissionModal(true)} className="theme-btn theme-btn-primary">
-            + New mission
-          </button>
-          <button type="button" onClick={() => setImportMissionModal(true)} className="theme-btn theme-btn-ghost">
-            Import mission
-          </button>
-        </div>
+        {isAdmin && (
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" onClick={() => setAddMissionModal(true)} className="theme-btn theme-btn-primary">
+              + New mission
+            </button>
+            <button type="button" onClick={() => setImportMissionModal(true)} className="theme-btn theme-btn-ghost">
+              Import mission
+            </button>
+          </div>
+        )}
       </header>
 
       <div
@@ -225,17 +240,18 @@ export default function MissionsPage() {
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                setContextMenu({
-                  x: e.clientX,
-                  y: e.clientY,
-                  items: [
-                    { label: "Open mission", onClick: () => router.push(`/missions/${p.id}`) },
-                    { label: "Rename", onClick: () => setRenameMissionModal(p) },
-                    { label: "Set dates (start / end)", onClick: () => setSetDatesModal(p) },
-                    { label: "Export mission", onClick: () => handleExport(p) },
-                    { label: "Delete", onClick: () => setDeleteMissionModal(p) },
-                  ],
-                });
+                const items = [
+                  { label: "Open mission", onClick: () => router.push(`/missions/${p.id}`) },
+                  ...(isAdmin
+                    ? [
+                        { label: "Rename", onClick: () => setRenameMissionModal(p) },
+                        { label: "Set dates (start / end)", onClick: () => setSetDatesModal(p) },
+                        { label: "Export mission", onClick: () => handleExport(p) },
+                        { label: "Delete", onClick: () => setDeleteMissionModal(p) },
+                      ]
+                    : [{ label: "Export mission", onClick: () => handleExport(p) }]),
+                ];
+                setContextMenu({ x: e.clientX, y: e.clientY, items });
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.background = "var(--tree-hover)";
@@ -271,7 +287,9 @@ export default function MissionsPage() {
       </div>
 
       {missions.length === 0 && (
-        <p style={{ color: "var(--text-muted)" }}>No missions yet. Right-click or use &quot;+ New mission&quot; to create one.</p>
+        <p style={{ color: "var(--text-muted)" }}>
+          {isAdmin ? 'No missions yet. Right-click or use "+ New mission" to create one.' : "No missions yet."}
+        </p>
       )}
 
       {contextMenu && (

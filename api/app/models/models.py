@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 from sqlalchemy import (
+    Boolean,
     Column,
     String,
     Text,
@@ -89,6 +90,9 @@ class Port(Base):
     service_name = Column(String(255), nullable=True)
     service_version = Column(String(255), nullable=True)
     banner = Column(Text, nullable=True)
+    description_md = Column(Text, nullable=True)
+    evidence_md = Column(Text, nullable=True)
+    discovered_by = Column(String(64), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -111,6 +115,41 @@ class Application(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
 
+class VulnerabilitySubnetAssociation(Base):
+    __tablename__ = "vulnerability_subnet_associations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_default)
+    vulnerability_definition_id = Column(
+        UUID(as_uuid=True), ForeignKey("vulnerability_definitions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    subnet_id = Column(UUID(as_uuid=True), ForeignKey("subnets.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    definition = relationship("VulnerabilityDefinition", backref="subnet_associations")
+    subnet = relationship("Subnet", backref="vulnerability_associations")
+
+    __table_args__ = (UniqueConstraint("vulnerability_definition_id", "subnet_id", name="uq_vuln_def_subnet"),)
+
+
+class VulnerabilityAttachment(Base):
+    __tablename__ = "vulnerability_attachments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_default)
+    vulnerability_definition_id = Column(
+        UUID(as_uuid=True), ForeignKey("vulnerability_definitions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    filename = Column(String(512), nullable=False)
+    mime = Column(String(128), nullable=True)
+    size = Column(Integer, nullable=True)
+    stored_path = Column(String(1024), nullable=False)
+    uploaded_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    is_pasted = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    definition = relationship("VulnerabilityDefinition", backref="attachments")
+    uploaded_by = relationship("User", backref="vulnerability_attachments")
+
+
 class VulnerabilityDefinition(Base):
     __tablename__ = "vulnerability_definitions"
 
@@ -119,10 +158,13 @@ class VulnerabilityDefinition(Base):
     title = Column(String(512), nullable=False)
     description_md = Column(Text, nullable=True)
     remediation_md = Column(Text, nullable=True)
+    evidence_md = Column(Text, nullable=True)
     cvss_vector = Column(String(255), nullable=True)
     cvss_score = Column(Integer, nullable=True)
     severity = Column(String(32), nullable=True)
+    cve_ids = Column(ARRAY(String), nullable=True, default=list)
     references = Column(ARRAY(Text), nullable=True, default=list)
+    discovered_by = Column(String(64), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -145,6 +187,7 @@ class VulnerabilityInstance(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     definition = relationship("VulnerabilityDefinition", backref="instances")
+    host = relationship("Host", backref="vulnerability_instances")
 
 
 class Evidence(Base):
@@ -162,9 +205,13 @@ class Evidence(Base):
     size = Column(Integer, nullable=True)
     sha256 = Column(String(64), nullable=True)
     caption = Column(Text, nullable=True)
+    stored_path = Column(String(1024), nullable=True)
+    is_pasted = Column(Boolean, nullable=False, default=False)
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     thumbnail_path = Column(String(1024), nullable=True)
+
+    uploaded_by = relationship("User", backref="evidence")
 
 
 class Note(Base):
@@ -188,6 +235,7 @@ class Lock(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_default)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    project = relationship("Project", backref="locks", passive_deletes=True)
     record_type = Column(String(64), nullable=False)
     record_id = Column(UUID(as_uuid=True), nullable=False)
     locked_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
@@ -211,6 +259,30 @@ class AuditEvent(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     ip_address = Column(String(45), nullable=True)
     user_agent = Column(Text, nullable=True)
+
+
+class ImportExportJob(Base):
+    __tablename__ = "import_export_jobs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_default)
+    type = Column(String(32), nullable=False)  # import | export
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    filename = Column(String(512), nullable=True)
+    status = Column(String(32), nullable=False, default="pending")  # pending, in_progress, completed, failed
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    error_message = Column(Text, nullable=True)
+
+
+class Session(Base):
+    __tablename__ = "sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_default)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    ip_address = Column(String(45), nullable=True)
+    last_activity = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
 
 class Job(Base):

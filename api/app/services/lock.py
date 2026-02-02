@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.models import Lock, User
 
-LOCKABLE_RECORD_TYPES = frozenset({"host", "port", "subnet", "note", "vulnerability_instance"})
+LOCKABLE_RECORD_TYPES = frozenset({"host", "port", "subnet", "note", "vulnerability_instance", "vulnerability_definition"})
 
 
 def _now() -> datetime:

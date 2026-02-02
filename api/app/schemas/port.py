@@ -13,6 +13,9 @@ class PortCreate(BaseModel):
     service_name: str | None = Field(None, max_length=255)
     service_version: str | None = Field(None, max_length=255)
     banner: str | None = None
+    description_md: str | None = None
+    evidence_md: str | None = None
+    discovered_by: str | None = Field(None, max_length=64)
 
 
 class PortUpdate(BaseModel):
@@ -20,6 +23,9 @@ class PortUpdate(BaseModel):
     service_name: str | None = Field(None, max_length=255)
     service_version: str | None = Field(None, max_length=255)
     banner: str | None = None
+    description_md: str | None = None
+    evidence_md: str | None = None
+    discovered_by: str | None = Field(None, max_length=64)
 
 
 class PortRead(BaseModel):
@@ -31,7 +37,24 @@ class PortRead(BaseModel):
     service_name: str | None
     service_version: str | None
     banner: str | None
+    description_md: str | None
+    evidence_md: str | None
+    discovered_by: str | None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PortAttachmentSummary(BaseModel):
+    id: UUID
+    filename: str
+    mime: str | None
+    size: int | None
+    is_pasted: bool
+    uploaded_by_username: str | None
+    created_at: datetime
+
+
+class PortReadWithAttachments(PortRead):
+    attachments: list[PortAttachmentSummary] = []

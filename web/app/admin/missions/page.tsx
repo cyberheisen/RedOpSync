@@ -74,6 +74,7 @@ export default function AdminMissionsPage() {
         method: "DELETE",
         credentials: "include",
       });
+      const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
       if (res.ok) {
         setMissions((prev) => prev.filter((p) => p.id !== mission.id));
         setSelectedIds((prev) => {
@@ -82,8 +83,11 @@ export default function AdminMissionsPage() {
           return next;
         });
         setToast(`Mission "${mission.name}" deleted`);
+      } else {
+        const msg = Array.isArray(data.detail) ? (data.detail as { msg?: string }[]).map((d) => d.msg || "").join("; ") : typeof data.detail === "string" ? data.detail : "Delete failed";
+        setToast(msg || `Delete failed (${res.status})`);
       }
-    } catch {
+    } catch (e) {
       setToast("Delete failed");
     }
     setDeleteModal(null);
@@ -92,22 +96,25 @@ export default function AdminMissionsPage() {
 
   const handleDeleteBulk = async () => {
     const toDelete = Array.from(selectedIds);
-    let deleted = 0;
+    const failed: string[] = [];
     for (const id of toDelete) {
       try {
         const res = await fetch(apiUrl(`/api/projects/${id}`), {
           method: "DELETE",
           credentials: "include",
         });
-        if (res.ok) deleted++;
+        if (!res.ok) failed.push(id);
       } catch {
-        // continue
+        failed.push(id);
       }
     }
-    setMissions((prev) => prev.filter((p) => !selectedIds.has(p.id)));
-    setSelectedIds(new Set());
+    const deleted = toDelete.length - failed.length;
+    if (deleted > 0) {
+      setMissions((prev) => prev.filter((p) => !selectedIds.has(p.id) || failed.includes(p.id)));
+      setSelectedIds(new Set());
+    }
     setDeleteModal(null);
-    setToast(`Deleted ${deleted} mission(s)`);
+    setToast(failed.length > 0 ? `Deleted ${deleted}, failed ${failed.length}` : `Deleted ${deleted} mission(s)`);
   };
 
   if (loading) {

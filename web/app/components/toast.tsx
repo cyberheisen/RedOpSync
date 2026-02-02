@@ -1,10 +1,11 @@
 "use client";
 
 type Props = {
-  message: string;
+  message: React.ReactNode;
 };
 
 export function Toast({ message }: Props) {
+  const display = typeof message === "string" ? message : (message != null ? String(message) : "");
   return (
     <div
       style={{
@@ -21,8 +22,8 @@ export function Toast({ message }: Props) {
         zIndex: 1001,
         boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
       }}
-    >
-      {message}
+      >
+      {display}
     </div>
   );
 }

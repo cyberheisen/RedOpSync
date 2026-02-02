@@ -16,49 +16,20 @@ type Lock = {
   expires_at: string;
 };
 
-// Mock data for locks (would come from API in production)
-const mockLocks: Lock[] = [
-  {
-    id: "lock-1",
-    project_id: "proj-1",
-    project_name: "Acme Corp Engagement",
-    record_type: "host",
-    record_id: "host-123",
-    locked_by_user_id: "user-1",
-    locked_by_username: "jsmith",
-    locked_at: new Date(Date.now() - 1800000).toISOString(),
-    expires_at: new Date(Date.now() + 300000).toISOString(),
-  },
-  {
-    id: "lock-2",
-    project_id: "proj-1",
-    project_name: "Acme Corp Engagement",
-    record_type: "subnet",
-    record_id: "subnet-456",
-    locked_by_user_id: "user-2",
-    locked_by_username: "admin",
-    locked_at: new Date(Date.now() - 600000).toISOString(),
-    expires_at: new Date(Date.now() + 1200000).toISOString(),
-  },
-  {
-    id: "lock-3",
-    project_id: "proj-2",
-    project_name: "Beta Test Project",
-    record_type: "port",
-    record_id: "port-789",
-    locked_by_user_id: "user-1",
-    locked_by_username: "jsmith",
-    locked_at: new Date(Date.now() - 3600000).toISOString(),
-    expires_at: new Date(Date.now() + 600000).toISOString(),
-  },
-];
-
 export default function AdminLocksPage() {
-  const [locks, setLocks] = useState<Lock[]>(mockLocks);
-  const [loading, setLoading] = useState(false);
+  const [grouped, setGrouped] = useState<{ project_id: string; project_name: string; locks: Lock[] }[]>([]);
+  const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
   const [releaseModal, setReleaseModal] = useState<Lock | null>(null);
   const [releaseAllModal, setReleaseAllModal] = useState<string | null>(null); // project_id
+
+  useEffect(() => {
+    fetch(apiUrl("/api/admin/locks"), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setGrouped(Array.isArray(data) ? data : []))
+      .catch(() => setGrouped([]))
+      .finally(() => setLoading(false));
+  }, []);
 
   useEffect(() => {
     if (!toast) return;
@@ -66,23 +37,45 @@ export default function AdminLocksPage() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  const handleForceRelease = (lock: Lock) => {
-    setLocks((prev) => prev.filter((l) => l.id !== lock.id));
+  const reload = () => {
+    fetch(apiUrl("/api/admin/locks"), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setGrouped(Array.isArray(data) ? data : []));
+  };
+
+  const handleForceRelease = async (lock: Lock) => {
+    const res = await fetch(apiUrl(`/api/admin/locks/${lock.id}/force-release`), {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      setToast(d.detail ?? "Failed to release lock");
+      return;
+    }
     setReleaseModal(null);
+    reload();
     setToast(`Lock released for ${lock.record_type}:${lock.record_id.slice(0, 8)}`);
   };
 
-  const handleReleaseAllForProject = (projectId: string) => {
-    const projectName = locks.find((l) => l.project_id === projectId)?.project_name ?? "project";
-    setLocks((prev) => prev.filter((l) => l.project_id !== projectId));
+  const handleReleaseAllForProject = async (projectId: string) => {
+    const projectName = grouped.find((g) => g.project_id === projectId)?.project_name ?? "project";
+    const res = await fetch(apiUrl(`/api/admin/locks/project/${projectId}/force-release-all`), {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      setToast(d.detail ?? "Failed to release locks");
+      return;
+    }
     setReleaseAllModal(null);
+    reload();
     setToast(`All locks released for "${projectName}"`);
   };
 
-  const groupedByProject = locks.reduce((acc, lock) => {
-    const key = lock.project_id;
-    if (!acc[key]) acc[key] = { name: lock.project_name ?? "Unknown Project", locks: [] };
-    acc[key].locks.push(lock);
+  const groupedByProject = grouped.reduce((acc, g) => {
+    acc[g.project_id] = { name: g.project_name ?? "Unknown Project", locks: g.locks };
     return acc;
   }, {} as Record<string, { name: string; locks: Lock[] }>);
 
@@ -104,6 +97,14 @@ export default function AdminLocksPage() {
     return `in ${hrs}h ${mins % 60}m`;
   };
 
+  const allLocks = grouped.flatMap((g) => g.locks);
+
+  if (loading) {
+    return (
+      <div style={{ padding: 32, color: "var(--text-muted)" }}>Loading locks…</div>
+    );
+  }
+
   return (
     <div style={{ padding: 32 }}>
       <div style={{ marginBottom: 24 }}>
@@ -113,7 +114,7 @@ export default function AdminLocksPage() {
         </p>
       </div>
 
-      {locks.length === 0 ? (
+      {allLocks.length === 0 ? (
         <div
           style={{
             padding: 32,
@@ -127,7 +128,7 @@ export default function AdminLocksPage() {
           No active locks
         </div>
       ) : (
-        Object.entries(groupedByProject).map(([projectId, { name, locks: projectLocks }]) => (
+        Object.entries(groupedByProject).map(([projectId, { name, locks: projectLocks }]) => projectLocks.length > 0 ? (
           <div
             key={projectId}
             style={{
@@ -212,7 +213,7 @@ export default function AdminLocksPage() {
               </tbody>
             </table>
           </div>
-        ))
+        ) : null)
       )}
 
       {/* Release Single Lock Modal */}

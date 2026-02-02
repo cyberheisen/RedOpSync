@@ -7,11 +7,15 @@ from app.models.models import (
     Application,
     VulnerabilityDefinition,
     VulnerabilityInstance,
+    VulnerabilitySubnetAssociation,
+    VulnerabilityAttachment,
     Evidence,
     Note,
     Lock,
     AuditEvent,
     Job,
+    ImportExportJob,
+    Session as SessionModel,
 )
 
 __all__ = [
@@ -23,9 +27,13 @@ __all__ = [
     "Application",
     "VulnerabilityDefinition",
     "VulnerabilityInstance",
+    "VulnerabilitySubnetAssociation",
+    "VulnerabilityAttachment",
     "Evidence",
     "Note",
     "Lock",
     "AuditEvent",
     "Job",
+    "ImportExportJob",
+    "SessionModel",
 ]

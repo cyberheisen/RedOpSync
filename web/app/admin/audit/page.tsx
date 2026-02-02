@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { apiUrl } from "../../lib/api";
 
 type AuditEvent = {
   id: string;
@@ -8,25 +9,11 @@ type AuditEvent = {
   user: string;
   action: string;
   target_type: string;
-  target_id: string;
+  target_id: string | null;
   target_name: string | null;
   details: string | null;
   ip: string;
 };
-
-// Mock audit events
-const mockEvents: AuditEvent[] = [
-  { id: "1", timestamp: new Date(Date.now() - 120000).toISOString(), user: "admin", action: "force_release_lock", target_type: "lock", target_id: "lock-123", target_name: null, details: "Released lock on host 10.0.0.1", ip: "192.168.1.100" },
-  { id: "2", timestamp: new Date(Date.now() - 900000).toISOString(), user: "admin", action: "create_user", target_type: "user", target_id: "user-456", target_name: "jsmith", details: "Created operator account", ip: "192.168.1.100" },
-  { id: "3", timestamp: new Date(Date.now() - 1800000).toISOString(), user: "jsmith", action: "login", target_type: "session", target_id: "sess-789", target_name: null, details: "Successful login", ip: "192.168.1.101" },
-  { id: "4", timestamp: new Date(Date.now() - 3600000).toISOString(), user: "admin", action: "disable_user", target_type: "user", target_id: "user-111", target_name: "olduser", details: "Account disabled for inactivity", ip: "192.168.1.100" },
-  { id: "5", timestamp: new Date(Date.now() - 7200000).toISOString(), user: "jsmith", action: "create_host", target_type: "host", target_id: "host-222", target_name: "10.0.0.5", details: null, ip: "192.168.1.101" },
-  { id: "6", timestamp: new Date(Date.now() - 14400000).toISOString(), user: "admin", action: "delete_project", target_type: "project", target_id: "proj-333", target_name: "Old Test Project", details: "Project and all associated data deleted", ip: "192.168.1.100" },
-  { id: "7", timestamp: new Date(Date.now() - 28800000).toISOString(), user: "admin", action: "bulk_export", target_type: "system", target_id: "export-444", target_name: null, details: "Exported 3 projects", ip: "192.168.1.100" },
-  { id: "8", timestamp: new Date(Date.now() - 43200000).toISOString(), user: "operator1", action: "login_failed", target_type: "session", target_id: "sess-555", target_name: null, details: "Invalid password (attempt 2)", ip: "10.0.0.50" },
-  { id: "9", timestamp: new Date(Date.now() - 86400000).toISOString(), user: "admin", action: "reset_password", target_type: "user", target_id: "user-666", target_name: "operator1", details: "Password reset requested", ip: "192.168.1.100" },
-  { id: "10", timestamp: new Date(Date.now() - 172800000).toISOString(), user: "system", action: "cleanup_orphans", target_type: "system", target_id: "maint-777", target_name: null, details: "Removed 42 orphaned records", ip: "localhost" },
-];
 
 const actionColors: Record<string, { bg: string; color: string; border: string }> = {
   create: { bg: "rgba(72, 187, 120, 0.1)", color: "#48bb78", border: "rgba(72, 187, 120, 0.3)" },
@@ -45,9 +32,40 @@ const getActionColor = (action: string) => {
 };
 
 export default function AdminAuditPage() {
-  const [events] = useState<AuditEvent[]>(mockEvents);
+  const [events, setEvents] = useState<AuditEvent[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
   const [filterUser, setFilterUser] = useState("");
   const [filterAction, setFilterAction] = useState("");
+  const [page, setPage] = useState(0);
+  const [users, setUsers] = useState<string[]>([]);
+  const [actions, setActions] = useState<string[]>([]);
+  const limit = 50;
+
+  useEffect(() => {
+    fetch(apiUrl("/api/admin/audit/filters"), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((d) => {
+        setUsers(d.users ?? []);
+        setActions(d.actions ?? []);
+      });
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    const params = new URLSearchParams();
+    params.set("limit", String(limit));
+    params.set("offset", String(page * limit));
+    if (filterUser) params.set("username", filterUser);
+    if (filterAction) params.set("action_type", filterAction);
+    fetch(apiUrl(`/api/admin/audit?${params}`), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : { events: [], total: 0 }))
+      .then((d) => {
+        setEvents(d.events ?? []);
+        setTotal(d.total ?? 0);
+      })
+      .finally(() => setLoading(false));
+  }, [page, filterUser, filterAction]);
 
   const formatTimestamp = (isoDate: string) => {
     const date = new Date(isoDate);
@@ -65,14 +83,7 @@ export default function AdminAuditPage() {
     return date.toLocaleDateString() + " " + date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
 
-  const filteredEvents = events.filter((e) => {
-    if (filterUser && !e.user.toLowerCase().includes(filterUser.toLowerCase())) return false;
-    if (filterAction && !e.action.toLowerCase().includes(filterAction.toLowerCase())) return false;
-    return true;
-  });
-
-  const uniqueUsers = Array.from(new Set(events.map((e) => e.user)));
-  const uniqueActions = Array.from(new Set(events.map((e) => e.action)));
+  const filteredEvents = events;
 
   return (
     <div style={{ padding: 32 }}>
@@ -87,23 +98,23 @@ export default function AdminAuditPage() {
       <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
         <select
           value={filterUser}
-          onChange={(e) => setFilterUser(e.target.value)}
+          onChange={(e) => { setFilterUser(e.target.value); setPage(0); }}
           className="theme-select"
           style={{ maxWidth: 180 }}
         >
           <option value="">All Users</option>
-          {uniqueUsers.map((u) => (
+          {users.map((u) => (
             <option key={u} value={u}>{u}</option>
           ))}
         </select>
         <select
           value={filterAction}
-          onChange={(e) => setFilterAction(e.target.value)}
+          onChange={(e) => { setFilterAction(e.target.value); setPage(0); }}
           className="theme-select"
           style={{ maxWidth: 200 }}
         >
           <option value="">All Actions</option>
-          {uniqueActions.map((a) => (
+          {actions.map((a) => (
             <option key={a} value={a}>{a.replace(/_/g, " ")}</option>
           ))}
         </select>
@@ -142,7 +153,13 @@ export default function AdminAuditPage() {
             </tr>
           </thead>
           <tbody>
-            {filteredEvents.length === 0 ? (
+            {loading ? (
+              <tr>
+                <td colSpan={6} style={{ padding: "24px 16px", textAlign: "center", color: "var(--text-muted)" }}>
+                  Loading…
+                </td>
+              </tr>
+            ) : filteredEvents.length === 0 ? (
               <tr>
                 <td colSpan={6} style={{ padding: "24px 16px", textAlign: "center", color: "var(--text-muted)" }}>
                   No audit events found
@@ -175,7 +192,7 @@ export default function AdminAuditPage() {
                     </td>
                     <td style={{ padding: "12px 16px" }}>
                       <span style={{ color: "var(--text-muted)", fontSize: 12 }}>{event.target_type}:</span>{" "}
-                      <span style={{ fontWeight: 500 }}>{event.target_name || event.target_id.slice(0, 12)}</span>
+                      <span style={{ fontWeight: 500 }}>{event.target_name || (event.target_id ? event.target_id.slice(0, 12) : "—")}</span>
                     </td>
                     <td style={{ padding: "12px 16px", color: "var(--text-muted)", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>
                       {event.details || "—"}
@@ -191,14 +208,26 @@ export default function AdminAuditPage() {
         </table>
       </div>
 
-      {/* Pagination (Mock) */}
+      {/* Pagination */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, color: "var(--text-muted)", fontSize: 13 }}>
-        <span>Showing {filteredEvents.length} of {events.length} events</span>
+        <span>Showing {filteredEvents.length} of {total} events</span>
         <div style={{ display: "flex", gap: 8 }}>
-          <button type="button" className="theme-btn theme-btn-ghost" style={{ padding: "4px 12px", fontSize: 12 }} disabled>
+          <button
+            type="button"
+            className="theme-btn theme-btn-ghost"
+            style={{ padding: "4px 12px", fontSize: 12 }}
+            disabled={page === 0}
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+          >
             Previous
           </button>
-          <button type="button" className="theme-btn theme-btn-ghost" style={{ padding: "4px 12px", fontSize: 12 }} disabled>
+          <button
+            type="button"
+            className="theme-btn theme-btn-ghost"
+            style={{ padding: "4px 12px", fontSize: 12 }}
+            disabled={(page + 1) * limit >= total}
+            onClick={() => setPage((p) => p + 1)}
+          >
             Next
           </button>
         </div>

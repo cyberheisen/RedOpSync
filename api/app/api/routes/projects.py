@@ -1,11 +1,14 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from app.core.admin_deps import require_admin
 from app.core.deps import get_current_user
 from app.db.session import get_db
-from app.models.models import Project, User
+from app.models.models import Lock, Project, User
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead
+from app.services.audit import log_audit
 
 router = APIRouter()
 
@@ -21,8 +24,9 @@ def list_projects(
 @router.post("", response_model=ProjectRead, status_code=201)
 def create_project(
     body: ProjectCreate,
+    request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     project = Project(
         name=body.name,
@@ -35,6 +39,17 @@ def create_project(
     db.add(project)
     db.commit()
     db.refresh(project)
+    log_audit(
+        db,
+        project_id=project.id,
+        user_id=current_user.id,
+        action_type="create_mission",
+        record_type="project",
+        record_id=project.id,
+        after_json={"name": project.name},
+        ip_address=_get_client_ip(request),
+    )
+    db.commit()
     return project
 
 
@@ -55,7 +70,7 @@ def update_project(
     project_id: UUID,
     body: ProjectUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
@@ -68,15 +83,37 @@ def update_project(
     return project
 
 
+def _get_client_ip(request: Request) -> str | None:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+
 @router.delete("/{project_id}", status_code=204)
 def delete_project(
     project_id: UUID,
+    request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
+    """Delete project (admin only). Cascades to related data."""
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    name = project.name
+    log_audit(
+        db,
+        project_id=project_id,
+        user_id=current_user.id,
+        action_type="delete_mission",
+        record_type="project",
+        record_id=project_id,
+        before_json={"name": name},
+        ip_address=_get_client_ip(request),
+    )
+    # Delete locks explicitly to avoid SQLAlchemy trying to null project_id (NOT NULL)
+    db.query(Lock).filter(Lock.project_id == project_id).delete(synchronize_session=False)
     db.delete(project)
     db.commit()
     return None
