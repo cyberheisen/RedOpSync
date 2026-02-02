@@ -207,6 +207,10 @@ class Evidence(Base):
     caption = Column(Text, nullable=True)
     stored_path = Column(String(1024), nullable=True)
     is_pasted = Column(Boolean, nullable=False, default=False)
+    source = Column(String(64), nullable=True)
+    imported_at = Column(DateTime(timezone=True), nullable=True)
+    source_file = Column(String(512), nullable=True)
+    notes_md = Column(Text, nullable=True)  # user-added notes for this evidence
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     thumbnail_path = Column(String(1024), nullable=True)
@@ -219,8 +223,10 @@ class Note(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_default)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    subnet_id = Column(UUID(as_uuid=True), ForeignKey("subnets.id", ondelete="CASCADE"), nullable=True, index=True)
     host_id = Column(UUID(as_uuid=True), ForeignKey("hosts.id", ondelete="CASCADE"), nullable=True, index=True)
     port_id = Column(UUID(as_uuid=True), ForeignKey("ports.id", ondelete="SET NULL"), nullable=True, index=True)
+    evidence_id = Column(UUID(as_uuid=True), ForeignKey("evidence.id", ondelete="CASCADE"), nullable=True, index=True)
     vuln_instance_id = Column(
         UUID(as_uuid=True), ForeignKey("vulnerability_instances.id", ondelete="SET NULL"), nullable=True, index=True
     )

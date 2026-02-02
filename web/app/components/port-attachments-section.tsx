@@ -6,9 +6,11 @@ import { apiUrl } from "../lib/api";
 type Attachment = {
   id: string;
   filename: string;
+  caption: string | null;
   mime: string | null;
   size: number | null;
   is_pasted: boolean;
+  source: string | null;
   uploaded_by_username: string | null;
   created_at: string;
 };
@@ -41,7 +43,10 @@ export function PortAttachmentsSection({ portId, canEdit, onRefresh }: Props) {
     setLoading(true);
     fetch(apiUrl(`/api/ports/${portId}/attachments`), { credentials: "include" })
       .then((r) => (r.ok ? r.json() : []))
-      .then((data: Attachment[]) => setAttachments(data))
+      .then((data: Attachment[]) => {
+        // Exclude gowitness evidence — it belongs in the tree, not here
+        setAttachments((data || []).filter((a) => (a.source || "").toLowerCase() !== "gowitness"));
+      })
       .finally(() => setLoading(false));
   }, [portId]);
 
@@ -182,7 +187,7 @@ export function PortAttachmentsSection({ portId, canEdit, onRefresh }: Props) {
                       >
                         <img
                           src={apiUrl(`/api/ports/${portId}/attachments/${a.id}`)}
-                          alt={a.filename}
+                          alt={a.caption || a.filename}
                           style={{
                             width: 64,
                             height: 64,
@@ -194,14 +199,20 @@ export function PortAttachmentsSection({ portId, canEdit, onRefresh }: Props) {
                       </a>
                     ) : null}
                     <div style={{ minWidth: 0 }}>
-                      <a
-                        href={apiUrl(`/api/ports/${portId}/attachments/${a.id}`)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="theme-link"
-                      >
-                        {a.is_pasted ? "Pasted Screenshot" : a.filename}
-                      </a>
+                      {isImage(a.mime) ? (
+                        <a
+                          href={apiUrl(`/api/ports/${portId}/attachments/${a.id}`)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="theme-link"
+                        >
+                          {a.caption || (a.is_pasted ? "Pasted Screenshot" : a.filename)}
+                        </a>
+                      ) : (
+                        <span style={{ fontWeight: 500 }}>
+                          {a.caption || a.filename}
+                        </span>
+                      )}
                       <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
                         {a.uploaded_by_username ?? "—"} • {formatDate(a.created_at)}
                       </div>

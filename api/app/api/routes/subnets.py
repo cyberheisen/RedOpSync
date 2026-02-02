@@ -6,8 +6,9 @@ from fastapi import status
 
 from app.core.deps import get_current_user
 from app.db.session import get_db
-from app.models.models import Subnet, Project, User
+from app.models.models import Host, Subnet, Project, User
 from app.schemas.subnet import SubnetCreate, SubnetUpdate, SubnetRead
+from app.services.audit import log_audit
 from app.services.lock import require_lock
 
 router = APIRouter()
@@ -92,6 +93,22 @@ def delete_subnet(
         require_lock(db, subnet.project_id, "subnet", subnet_id, current_user)
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    project_id = subnet.project_id
+    cidr = subnet.cidr
+    name = subnet.name
+    # Delete all hosts in this subnet first (cascades to ports, evidence, vuln instances, notes)
+    hosts_in_subnet = db.query(Host).filter(Host.subnet_id == subnet_id).all()
+    for host in hosts_in_subnet:
+        db.delete(host)
     db.delete(subnet)
+    log_audit(
+        db,
+        project_id=project_id,
+        user_id=current_user.id,
+        action_type="delete_subnet",
+        record_type="subnet",
+        record_id=subnet_id,
+        after_json={"cidr": cidr, "name": name, "hosts_deleted": len(hosts_in_subnet)},
+    )
     db.commit()
     return None

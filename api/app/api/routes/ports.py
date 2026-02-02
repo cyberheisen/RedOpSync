@@ -14,7 +14,7 @@ from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.models.models import Evidence, Port, Host, User
 from app.schemas.port import PortCreate, PortUpdate, PortRead, PortReadWithAttachments, PortAttachmentSummary
-from app.schemas.evidence import EvidenceRead
+from app.schemas.evidence import EvidenceRead, EvidenceNotesUpdate
 from app.services.lock import require_lock
 from app.services.audit import log_audit
 
@@ -94,9 +94,12 @@ def get_port(
         PortAttachmentSummary(
             id=a.id,
             filename=a.filename,
+            caption=a.caption,
             mime=a.mime,
             size=a.size,
             is_pasted=bool(a.is_pasted),
+            source=a.source,
+            notes_md=a.notes_md,
             uploaded_by_username=a.uploaded_by.username if a.uploaded_by else None,
             created_at=a.created_at,
         )
@@ -169,9 +172,12 @@ def list_port_attachments(
             id=a.id,
             port_id=a.port_id,
             filename=a.filename,
+            caption=a.caption,
             mime=a.mime,
             size=a.size,
             is_pasted=bool(a.is_pasted),
+            source=a.source,
+            notes_md=a.notes_md,
             uploaded_by_username=a.uploaded_by.username if a.uploaded_by else None,
             created_at=a.created_at,
         )
@@ -310,6 +316,41 @@ def get_port_attachment_file(
         ev.stored_path,
         filename=ev.filename,
         media_type=ev.mime or "application/octet-stream",
+    )
+
+
+@router.patch("/{port_id}/attachments/{att_id}", response_model=EvidenceRead)
+def update_port_attachment_notes(
+    port_id: UUID,
+    att_id: UUID,
+    body: EvidenceNotesUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ev = (
+        db.query(Evidence)
+        .options(joinedload(Evidence.uploaded_by))
+        .filter(Evidence.id == att_id, Evidence.port_id == port_id)
+        .first()
+    )
+    if not ev:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    if body.notes_md is not None:
+        ev.notes_md = body.notes_md
+    db.commit()
+    db.refresh(ev)
+    return EvidenceRead(
+        id=ev.id,
+        port_id=ev.port_id,
+        filename=ev.filename,
+        caption=ev.caption,
+        mime=ev.mime,
+        size=ev.size,
+        is_pasted=bool(ev.is_pasted),
+        source=ev.source,
+        notes_md=ev.notes_md,
+        uploaded_by_username=ev.uploaded_by.username if ev.uploaded_by else None,
+        created_at=ev.created_at,
     )
 
 

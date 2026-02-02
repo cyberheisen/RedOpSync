@@ -9,6 +9,7 @@ import { AddHostModal } from "../../components/add-host-modal";
 import { AddSubnetModal } from "../../components/add-subnet-modal";
 import { ContextMenu } from "../../components/context-menu";
 import { ImportHostsModal, type ImportHostsContext } from "../../components/import-hosts-modal";
+import { ImportGoWitnessModal } from "../../components/import-gowitness-modal";
 import { NoteEditorPanel, type NoteAttachment } from "../../components/note-editor-panel";
 import { NotePrintView } from "../../components/note-print-view";
 import { PortModal } from "../../components/port-modal";
@@ -101,12 +102,27 @@ type VulnDefinition = {
 
 type NoteAttachmentDisplay = { id: string; filename: string; type: string; url: string };
 
-type NoteTarget = "scope" | "subnet" | "host";
+type PortEvidence = {
+  id: string;
+  filename: string;
+  caption: string | null;
+  mime: string | null;
+  size: number | null;
+  is_pasted: boolean;
+  source: string | null;
+  notes_md: string | null;
+  uploaded_by_username: string | null;
+  created_at: string;
+};
+
+type NoteTarget = "scope" | "subnet" | "host" | "port" | "evidence";
 
 type Note = {
   id: string;
   host_id: string | null;
+  port_id?: string | null;
   subnet_id?: string | null;
+  evidence_id?: string | null;
   body_md: string | null;
   title?: string | null;
   created_by?: string | null;
@@ -131,12 +147,12 @@ type SelectedNode =
   | { type: "host"; id: string }
   | { type: "host-ports"; hostId: string }
   | { type: "port"; id: string }
+  | { type: "port-evidence"; id: string; portId: string; hostId: string }
   | { type: "host-vulnerabilities"; hostId: string }
   | { type: "vuln-instance"; id: string }
   | { type: "vuln-definition"; id: string }
-  | { type: "host-notes"; hostId: string }
   | { type: "scope-notes" }
-  | { type: "subnet-notes"; subnetId: string }
+  | { type: "unresolved" }
   | { type: "note"; id: string; target: NoteTarget; targetId: string }
   | { type: "vulnerabilities" }
   | { type: "evidence" }
@@ -144,6 +160,17 @@ type SelectedNode =
   | null;
 
 const ICON = { ports: "▸", vulns: "⚠", notes: "≡" } as const;
+
+function isUnresolvedHost(h: { ip: string }): boolean {
+  return String(h.ip || "").toLowerCase() === "unresolved";
+}
+
+function hostLabel(h: { ip: string; dns_name: string | null }): string {
+  if (isUnresolvedHost(h) && h.dns_name) return `unresolved (${h.dns_name})`;
+  if (isUnresolvedHost(h)) return "unresolved";
+  if (h.dns_name && !isUnresolvedHost(h)) return `${h.dns_name} (${h.ip})`;
+  return `${h.ip}${h.dns_name ? ` (${h.dns_name})` : ""}`;
+}
 
 function formatDate(s: string | null): string {
   if (!s) return "—";
@@ -216,11 +243,22 @@ export default function MissionDetailPage() {
   const [portsByHost, setPortsByHost] = useState<Record<string, Port[]>>({});
   const [vulnsByHost, setVulnsByHost] = useState<Record<string, VulnInstance[]>>({});
   const [notesByHost, setNotesByHost] = useState<Record<string, Note[]>>({});
+  const [notesByPort, setNotesByPort] = useState<Record<string, Note[]>>({});
   const [scopeNotes, setScopeNotes] = useState<Note[]>([]);
   const [notesBySubnet, setNotesBySubnet] = useState<Record<string, Note[]>>({});
+  const [notesBySubnetLoaded, setNotesBySubnetLoaded] = useState<Set<string>>(new Set());
+  const [notesBySubnetLoading, setNotesBySubnetLoading] = useState<Set<string>>(new Set());
+  const [notesByEvidence, setNotesByEvidence] = useState<Record<string, Note[]>>({});
+  const [notesByEvidenceLoaded, setNotesByEvidenceLoaded] = useState<Set<string>>(new Set());
+  const [notesByEvidenceLoading, setNotesByEvidenceLoading] = useState<Set<string>>(new Set());
   const [portsLoaded, setPortsLoaded] = useState<Set<string>>(new Set());
+  const [evidenceByPort, setEvidenceByPort] = useState<Record<string, PortEvidence[]>>({});
+  const [evidenceLoaded, setEvidenceLoaded] = useState<Set<string>>(new Set());
+  const [evidenceLoading, setEvidenceLoading] = useState<Set<string>>(new Set());
   const [vulnsLoaded, setVulnsLoaded] = useState<Set<string>>(new Set());
   const [notesLoaded, setNotesLoaded] = useState<Set<string>>(new Set());
+  const [notesByPortLoaded, setNotesByPortLoaded] = useState<Set<string>>(new Set());
+  const [notesByPortLoading, setNotesByPortLoading] = useState<Set<string>>(new Set());
   const [scopeNotesLoaded, setScopeNotesLoaded] = useState(false);
   const [portsLoading, setPortsLoading] = useState<Set<string>>(new Set());
   const [vulnsLoading, setVulnsLoading] = useState<Set<string>>(new Set());
@@ -235,6 +273,7 @@ export default function MissionDetailPage() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: { label: string; onClick: () => void }[] } | null>(null);
   const [importHostsModal, setImportHostsModal] = useState<ImportHostsContext | null>(null);
+  const [importGoWitnessModal, setImportGoWitnessModal] = useState(false);
   const [addSubnetModal, setAddSubnetModal] = useState(false);
   const [addHostModal, setAddHostModal] = useState<{ subnetId: string | null } | null>(null);
   const [renameSubnetModal, setRenameSubnetModal] = useState<Subnet | null>(null);
@@ -243,13 +282,17 @@ export default function MissionDetailPage() {
     mode: "add" | "edit";
     target: NoteTarget;
     host?: Host;
+    port?: Port;
     subnet?: Subnet;
+    evidence?: PortEvidence;
     note?: Note;
   } | null>(null);
-  const [notePrintView, setNotePrintView] = useState<{ note: Note; target: NoteTarget; host?: Host; subnet?: Subnet } | null>(null);
-  const [deleteNoteModal, setDeleteNoteModal] = useState<{ note: Note; target: NoteTarget; host?: Host; subnet?: Subnet } | null>(null);
+  const [notePrintView, setNotePrintView] = useState<{ note: Note; target: NoteTarget; host?: Host; port?: Port; subnet?: Subnet; evidence?: PortEvidence } | null>(null);
+  const [deleteNoteModal, setDeleteNoteModal] = useState<{ note: Note; target: NoteTarget; host?: Host; port?: Port; subnet?: Subnet; evidence?: PortEvidence } | null>(null);
   const [portModal, setPortModal] = useState<{ mode: "add" | "edit"; host: Host; port?: Port } | null>(null);
   const [deletePortModal, setDeletePortModal] = useState<{ port: Port; host: Host } | null>(null);
+  const [deleteHostModal, setDeleteHostModal] = useState<Host | null>(null);
+  const [deleteSubnetModal, setDeleteSubnetModal] = useState<Subnet | null>(null);
   const [vulnDefinitions, setVulnDefinitions] = useState<VulnDefinition[]>([]);
   const [vulnDefinitionsLoaded, setVulnDefinitionsLoaded] = useState(false);
   const [vulnDefinitionsLoading, setVulnDefinitionsLoading] = useState(false);
@@ -260,6 +303,18 @@ export default function MissionDetailPage() {
   const [toast, setToast] = useState<string | null>(null);
 
   const { locks, acquireLock, releaseLock, renewLock, refreshLocks } = useLockState(missionId);
+
+  const loadEvidenceForPort = useCallback((portId: string) => {
+    if (evidenceLoaded.has(portId) || evidenceLoading.has(portId)) return;
+    setEvidenceLoading((p) => new Set(p).add(portId));
+    fetch(apiUrl(`/api/ports/${portId}/attachments`), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((atts: PortEvidence[]) => {
+        setEvidenceByPort((prev) => ({ ...prev, [portId]: atts ?? [] }));
+        setEvidenceLoaded((p) => new Set(p).add(portId));
+      })
+      .finally(() => setEvidenceLoading((p) => { const n = new Set(p); n.delete(portId); return n; }));
+  }, [evidenceLoaded, evidenceLoading]);
 
   const loadPortsForHost = useCallback((hostId: string) => {
     if (portsLoaded.has(hostId) || portsLoading.has(hostId)) return;
@@ -306,21 +361,42 @@ export default function MissionDetailPage() {
       .finally(() => setNotesLoading((p) => { const n = new Set(p); n.delete(hostId); return n; }));
   }, [notesLoaded, notesLoading]);
 
+  const loadNotesForPort = useCallback((portId: string) => {
+    if (notesByPortLoaded.has(portId) || notesByPortLoading.has(portId)) return;
+    setNotesByPortLoading((p) => new Set(p).add(portId));
+    fetch(apiUrl(`/api/notes?project_id=${missionId}&port_id=${portId}`), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((raw: { id: string; port_id: string | null; body_md: string | null; created_at?: string; updated_at?: string }[]) => {
+        const notes: Note[] = raw.map((n) => ({
+          ...n,
+          title: null,
+          created_by: "Unknown",
+          created_at: n.created_at ?? new Date().toISOString(),
+          updated_by: "Unknown",
+          updated_at: (n as { updated_at?: string }).updated_at ?? n.created_at ?? new Date().toISOString(),
+          attachments: [],
+        }));
+        setNotesByPort((prev) => ({ ...prev, [portId]: notes }));
+        setNotesByPortLoaded((p) => new Set(p).add(portId));
+      })
+      .finally(() => setNotesByPortLoading((p) => { const n = new Set(p); n.delete(portId); return n; }));
+  }, [missionId, notesByPortLoaded, notesByPortLoading]);
+
   const loadScopeNotes = useCallback(() => {
     if (scopeNotesLoaded || scopeNotesLoading) return;
     setScopeNotesLoading(true);
     fetch(apiUrl(`/api/notes?project_id=${missionId}`), { credentials: "include" })
       .then((r) => (r.ok ? r.json() : []))
-      .then((raw: { id: string; host_id: string | null; body_md: string | null; created_at?: string; updated_at?: string }[]) => {
+      .then((raw: { id: string; host_id: string | null; subnet_id: string | null; port_id: string | null; evidence_id: string | null; body_md: string | null; created_at?: string; updated_at?: string }[]) => {
         const notes: Note[] = raw
-          .filter((n) => !n.host_id)
+          .filter((n) => !n.host_id && !n.subnet_id && !n.port_id && !n.evidence_id)
           .map((n) => ({
             ...n,
             title: null,
             created_by: "Unknown",
             created_at: n.created_at ?? new Date().toISOString(),
             updated_by: "Unknown",
-            updated_at: n.updated_at ?? n.created_at ?? new Date().toISOString(),
+            updated_at: (n as { updated_at?: string }).updated_at ?? n.created_at ?? new Date().toISOString(),
             attachments: [],
           }));
         setScopeNotes(notes);
@@ -328,6 +404,48 @@ export default function MissionDetailPage() {
       })
       .finally(() => setScopeNotesLoading(false));
   }, [missionId, scopeNotesLoaded, scopeNotesLoading]);
+
+  const loadNotesForSubnet = useCallback((subnetId: string) => {
+    if (notesBySubnetLoaded.has(subnetId) || notesBySubnetLoading.has(subnetId)) return;
+    setNotesBySubnetLoading((p) => new Set(p).add(subnetId));
+    fetch(apiUrl(`/api/notes?project_id=${missionId}&subnet_id=${subnetId}`), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((raw: { id: string; body_md: string | null; created_at?: string; updated_at?: string }[]) => {
+        const notes: Note[] = raw.map((n) => ({
+          ...n,
+          title: null,
+          created_by: "Unknown",
+          created_at: n.created_at ?? new Date().toISOString(),
+          updated_by: "Unknown",
+          updated_at: (n as { updated_at?: string }).updated_at ?? n.created_at ?? new Date().toISOString(),
+          attachments: [],
+        }));
+        setNotesBySubnet((prev) => ({ ...prev, [subnetId]: notes }));
+        setNotesBySubnetLoaded((p) => new Set(p).add(subnetId));
+      })
+      .finally(() => setNotesBySubnetLoading((p) => { const n = new Set(p); n.delete(subnetId); return n; }));
+  }, [missionId, notesBySubnetLoaded, notesBySubnetLoading]);
+
+  const loadNotesForEvidence = useCallback((evidenceId: string) => {
+    if (notesByEvidenceLoaded.has(evidenceId) || notesByEvidenceLoading.has(evidenceId)) return;
+    setNotesByEvidenceLoading((p) => new Set(p).add(evidenceId));
+    fetch(apiUrl(`/api/notes?project_id=${missionId}&evidence_id=${evidenceId}`), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((raw: { id: string; body_md: string | null; created_at?: string; updated_at?: string }[]) => {
+        const notes: Note[] = raw.map((n) => ({
+          ...n,
+          title: null,
+          created_by: "Unknown",
+          created_at: n.created_at ?? new Date().toISOString(),
+          updated_by: "Unknown",
+          updated_at: (n as { updated_at?: string }).updated_at ?? n.created_at ?? new Date().toISOString(),
+          attachments: [],
+        }));
+        setNotesByEvidence((prev) => ({ ...prev, [evidenceId]: notes }));
+        setNotesByEvidenceLoaded((p) => new Set(p).add(evidenceId));
+      })
+      .finally(() => setNotesByEvidenceLoading((p) => { const n = new Set(p); n.delete(evidenceId); return n; }));
+  }, [missionId, notesByEvidenceLoaded, notesByEvidenceLoading]);
 
   const loadVulnDefinitions = useCallback(() => {
     if (vulnDefinitionsLoaded || vulnDefinitionsLoading) return;
@@ -355,15 +473,20 @@ export default function MissionDetailPage() {
   const loadData = useCallback(() => {
     setSelectedNode(null);
     setPortsByHost({});
+    setEvidenceByPort({});
+    setEvidenceLoaded(new Set());
     setVulnsByHost({});
     setNotesByHost({});
+    setNotesByPort({});
     setScopeNotes([]);
     setNotesBySubnet({});
+    setNotesBySubnetLoaded(new Set());
     setVulnDefinitions([]);
     setVulnDefinitionsLoaded(false);
     setPortsLoaded(new Set());
     setVulnsLoaded(new Set());
     setNotesLoaded(new Set());
+    setNotesByPortLoaded(new Set());
     setScopeNotesLoaded(false);
     Promise.all([
       fetch(apiUrl(`/api/projects/${missionId}`), { credentials: "include" }),
@@ -403,7 +526,7 @@ export default function MissionDetailPage() {
   }, [mission?.id, hostIds, loadPortsForHost, loadVulnsForHost]);
 
   const selectedHost =
-    selectedNode?.type === "host" || selectedNode?.type === "host-ports" || selectedNode?.type === "host-vulnerabilities" || selectedNode?.type === "host-notes" || (selectedNode?.type === "note" && selectedNode.target === "host")
+    selectedNode?.type === "host" || selectedNode?.type === "host-ports" || selectedNode?.type === "host-vulnerabilities" || (selectedNode?.type === "note" && selectedNode.target === "host")
       ? hosts.find((h) =>
           selectedNode!.type === "note"
             ? selectedNode.targetId === h.id
@@ -429,11 +552,38 @@ export default function MissionDetailPage() {
   };
 
   const hostsBySubnet = hosts.reduce<Record<string, Host[]>>((acc, h) => {
-    const k = h.subnet_id ?? "_unassigned";
-    if (!acc[k]) acc[k] = [];
-    acc[k].push(h);
+    if (isUnresolvedHost(h)) {
+      const k = "_unresolved";
+      if (!acc[k]) acc[k] = [];
+      acc[k].push(h);
+    } else {
+      const k = h.subnet_id ?? "_unassigned";
+      if (!acc[k]) acc[k] = [];
+      acc[k].push(h);
+    }
     return acc;
   }, {});
+
+  const unresolvedCount = (hostsBySubnet["_unresolved"] ?? []).length;
+  useEffect(() => {
+    if (unresolvedCount > 0) {
+      setExpanded((prev) => {
+        let next = new Set(prev);
+        if (!next.has("scope")) next = next.add("scope");
+        if (!next.has("unresolved")) next = next.add("unresolved");
+        return next;
+      });
+    }
+  }, [unresolvedCount]);
+
+  // Load evidence and port notes when port detail pane is shown
+  const selectedPortId = selectedNode?.type === "port" ? selectedNode.id : null;
+  useEffect(() => {
+    if (selectedPortId) {
+      loadEvidenceForPort(selectedPortId);
+      loadNotesForPort(selectedPortId);
+    }
+  }, [selectedPortId, loadEvidenceForPort, loadNotesForPort]);
 
   const allVulns = Object.values(vulnsByHost).flat();
   const scopeSeverity = getHighestSeverity(
@@ -572,58 +722,83 @@ export default function MissionDetailPage() {
       updated_by: "You" as const,
       updated_at: new Date().toISOString(),
     };
-    if (existingNote) {
-      if (target === "scope") {
-        setScopeNotes((prev) => prev.map((n) => (n.id === existingNote.id ? { ...n, ...baseNote } : n)));
-      } else if (target === "subnet") {
-        setNotesBySubnet((prev) => ({
-          ...prev,
-          [targetId]: (prev[targetId] ?? []).map((n) => (n.id === existingNote.id ? { ...n, ...baseNote } : n)),
-        }));
-      } else {
-        setNotesByHost((prev) => ({
-          ...prev,
-          [targetId]: (prev[targetId] ?? []).map((n) => (n.id === existingNote.id ? { ...n, ...baseNote } : n)),
-        }));
+    const apiTargets: NoteTarget[] = ["scope", "subnet", "host", "port", "evidence"];
+    if (apiTargets.includes(target)) {
+      try {
+        if (existingNote) {
+          const res = await fetch(apiUrl(`/api/notes/${existingNote.id}`), {
+            method: "PATCH",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ body_md: bodyMd }),
+          });
+          if (!res.ok) throw new Error("Failed to update note");
+          if (target === "scope") setScopeNotes((prev) => prev.map((n) => (n.id === existingNote.id ? { ...n, ...baseNote } : n)));
+          else if (target === "subnet") setNotesBySubnet((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).map((n) => (n.id === existingNote.id ? { ...n, ...baseNote } : n)) }));
+          else if (target === "host") setNotesByHost((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).map((n) => (n.id === existingNote.id ? { ...n, ...baseNote } : n)) }));
+          else if (target === "port") setNotesByPort((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).map((n) => (n.id === existingNote.id ? { ...n, ...baseNote } : n)) }));
+          else setNotesByEvidence((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).map((n) => (n.id === existingNote.id ? { ...n, ...baseNote } : n)) }));
+        } else {
+          const body: { project_id: string; subnet_id?: string; host_id?: string; port_id?: string; evidence_id?: string; body_md: string } = {
+            project_id: missionId,
+            body_md: bodyMd,
+          };
+          if (target === "scope") {
+            /* no extra fields */
+          } else if (target === "subnet") body.subnet_id = targetId;
+          else if (target === "host") body.host_id = targetId;
+          else if (target === "port") body.port_id = targetId;
+          else body.evidence_id = targetId;
+          const res = await fetch(apiUrl("/api/notes"), {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) throw new Error("Failed to create note");
+          const created = await res.json();
+          const newNote: Note = { ...created, title: title || null, attachments: newAttachments, created_by: "You", updated_by: "You" };
+          if (target === "scope") {
+            setScopeNotes((prev) => [newNote, ...prev]);
+            setScopeNotesLoaded(true);
+          } else if (target === "subnet") {
+            setNotesBySubnet((prev) => ({ ...prev, [targetId]: [newNote, ...(prev[targetId] ?? [])] }));
+            setNotesBySubnetLoaded((p) => new Set(p).add(targetId));
+          } else if (target === "host") {
+            setNotesByHost((prev) => ({ ...prev, [targetId]: [newNote, ...(prev[targetId] ?? [])] }));
+            setNotesLoaded((p) => new Set(p).add(targetId));
+          } else if (target === "port") {
+            setNotesByPort((prev) => ({ ...prev, [targetId]: [newNote, ...(prev[targetId] ?? [])] }));
+            setNotesByPortLoaded((p) => new Set(p).add(targetId));
+          } else {
+            setNotesByEvidence((prev) => ({ ...prev, [targetId]: [newNote, ...(prev[targetId] ?? [])] }));
+            setNotesByEvidenceLoaded((p) => new Set(p).add(targetId));
+          }
+        }
+        setNoteModal(null);
+        setToast("Note saved");
+      } catch (e) {
+        setToast(String(e));
       }
-    } else {
-      const newNote: Note = {
-        id: `local-${Date.now()}`,
-        host_id: target === "host" ? targetId : null,
-        subnet_id: target === "subnet" ? targetId : null,
-        body_md: bodyMd,
-        title: title || null,
-        created_by: "You",
-        created_at: new Date().toISOString(),
-        updated_by: "You",
-        updated_at: new Date().toISOString(),
-        attachments: newAttachments,
-      };
-      if (target === "scope") {
-        setScopeNotes((prev) => [newNote, ...prev]);
-        setScopeNotesLoaded(true);
-      } else if (target === "subnet") {
-        setNotesBySubnet((prev) => ({ ...prev, [targetId]: [newNote, ...(prev[targetId] ?? [])] }));
-      } else {
-        setNotesByHost((prev) => ({ ...prev, [targetId]: [newNote, ...(prev[targetId] ?? [])] }));
-        setNotesLoaded((p) => new Set(p).add(targetId));
-      }
+      return;
     }
-    setNoteModal(null);
-    setToast("Note saved");
   };
 
-  const handleDeleteNote = (note: Note, target: NoteTarget, targetId: string) => {
-    if (target === "scope") {
-      setScopeNotes((prev) => prev.filter((n) => n.id !== note.id));
-    } else if (target === "subnet") {
-      setNotesBySubnet((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).filter((n) => n.id !== note.id) }));
-    } else {
-      setNotesByHost((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).filter((n) => n.id !== note.id) }));
+  const handleDeleteNote = async (note: Note, target: NoteTarget, targetId: string) => {
+    try {
+      const res = await fetch(apiUrl(`/api/notes/${note.id}`), { method: "DELETE", credentials: "include" });
+      if (!res.ok) throw new Error("Failed to delete note");
+      if (target === "scope") setScopeNotes((prev) => prev.filter((n) => n.id !== note.id));
+      else if (target === "subnet") setNotesBySubnet((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).filter((n) => n.id !== note.id) }));
+      else if (target === "host") setNotesByHost((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).filter((n) => n.id !== note.id) }));
+      else if (target === "port") setNotesByPort((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).filter((n) => n.id !== note.id) }));
+      else setNotesByEvidence((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).filter((n) => n.id !== note.id) }));
+      setDeleteNoteModal(null);
+      setSelectedNode(null);
+      setToast("Note deleted");
+    } catch (e) {
+      setToast(String(e));
     }
-    setDeleteNoteModal(null);
-    setSelectedNode(null);
-    setToast("Note deleted");
   };
 
   const handleCreatePort = async (
@@ -700,6 +875,26 @@ export default function MissionDetailPage() {
     }
   };
 
+  const handleDeleteEvidence = async (portId: string, evId: string, hostId: string) => {
+    try {
+      const res = await fetch(apiUrl(`/api/ports/${portId}/attachments/${evId}`), { method: "DELETE", credentials: "include" });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(typeof d.detail === "string" ? d.detail : "Failed to delete evidence");
+      }
+      setEvidenceByPort((prev) => {
+        const list = (prev[portId] ?? []).filter((e) => e.id !== evId);
+        return { ...prev, [portId]: list };
+      });
+      if (selectedNode?.type === "port-evidence" && selectedNode.id === evId) {
+        setSelectedNode({ type: "port", id: portId });
+      }
+      setToast("Evidence deleted");
+    } catch (err) {
+      setToast(String(err));
+    }
+  };
+
   const handleDeletePort = async (portId: string, hostId: string) => {
     setLockError("");
     try {
@@ -713,6 +908,78 @@ export default function MissionDetailPage() {
       setPortsByHost((prev) => ({ ...prev, [hostId]: (prev[hostId] ?? []).filter((p) => p.id !== portId) }));
       setSelectedNode(null);
       setToast("Port deleted");
+      refreshLocks();
+    } catch (err) {
+      setLockError(String(err));
+    }
+  };
+
+  const handleDeleteHost = async (hostId: string) => {
+    setLockError("");
+    try {
+      await acquireLock("host", hostId);
+      const res = await fetch(apiUrl(`/api/hosts/${hostId}`), { method: "DELETE", credentials: "include" });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail ?? "Failed to delete host");
+      }
+      setDeleteHostModal(null);
+      const portIds = (portsByHost[hostId] ?? []).map((p) => p.id);
+      setHosts((prev) => prev.filter((h) => h.id !== hostId));
+      setPortsByHost((prev) => { const next = { ...prev }; delete next[hostId]; return next; });
+      setVulnsByHost((prev) => { const next = { ...prev }; delete next[hostId]; return next; });
+      setNotesByHost((prev) => { const next = { ...prev }; delete next[hostId]; return next; });
+      setNotesLoaded((prev) => { const n = new Set(prev); n.delete(hostId); return n; });
+      setEvidenceByPort((prev) => { const next = { ...prev }; portIds.forEach((id) => delete next[id]); return next; });
+      setEvidenceLoaded((prev) => { const n = new Set(prev); portIds.forEach((id) => n.delete(id)); return n; });
+      setNotesByPort((prev) => { const next = { ...prev }; portIds.forEach((id) => delete next[id]); return next; });
+      setNotesByPortLoaded((prev) => { const n = new Set(prev); portIds.forEach((id) => n.delete(id)); return n; });
+      setPortsLoaded((prev) => { const n = new Set(prev); n.delete(hostId); return n; });
+      setVulnsLoaded((prev) => { const n = new Set(prev); n.delete(hostId); return n; });
+      if (selectedNode && (selectedNode.type === "host" || selectedNode.type === "host-ports" || selectedNode.type === "host-vulnerabilities") && (selectedNode.type === "host" ? selectedNode.id : selectedNode.hostId) === hostId) setSelectedNode(null);
+      if (selectedNode?.type === "port" && portsByHost[hostId]?.some((p) => p.id === selectedNode.id)) setSelectedNode(null);
+      if (selectedNode?.type === "port-evidence" && portIds.includes(selectedNode.portId)) setSelectedNode(null);
+      if (selectedNode?.type === "note" && selectedNode.target === "host" && selectedNode.targetId === hostId) setSelectedNode(null);
+      setToast("Host and all its ports, evidence, and notes deleted");
+      refreshLocks();
+    } catch (err) {
+      setLockError(String(err));
+    }
+  };
+
+  const handleDeleteSubnet = async (subnetId: string) => {
+    setLockError("");
+    try {
+      await acquireLock("subnet", subnetId);
+      const res = await fetch(apiUrl(`/api/subnets/${subnetId}`), { method: "DELETE", credentials: "include" });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail ?? "Failed to delete subnet");
+      }
+      setDeleteSubnetModal(null);
+      const hostsInSubnet = hosts.filter((h) => h.subnet_id === subnetId);
+      const hostIdsToRemove = new Set(hostsInSubnet.map((h) => h.id));
+      const portIdsToRemove = new Set(hostsInSubnet.flatMap((h) => (portsByHost[h.id] ?? []).map((p) => p.id)));
+      setSubnets((prev) => prev.filter((s) => s.id !== subnetId));
+      setHosts((prev) => prev.filter((h) => !hostIdsToRemove.has(h.id)));
+      setPortsByHost((prev) => { const next = { ...prev }; hostIdsToRemove.forEach((hid) => delete next[hid]); return next; });
+      setVulnsByHost((prev) => { const next = { ...prev }; hostIdsToRemove.forEach((hid) => delete next[hid]); return next; });
+      setNotesByHost((prev) => { const next = { ...prev }; hostIdsToRemove.forEach((hid) => delete next[hid]); return next; });
+      setNotesLoaded((prev) => { const n = new Set(prev); hostIdsToRemove.forEach((id) => n.delete(id)); return n; });
+      setEvidenceByPort((prev) => { const next = { ...prev }; portIdsToRemove.forEach((id) => delete next[id]); return next; });
+      setEvidenceLoaded((prev) => { const n = new Set(prev); portIdsToRemove.forEach((id) => n.delete(id)); return n; });
+      setNotesByPort((prev) => { const next = { ...prev }; portIdsToRemove.forEach((id) => delete next[id]); return next; });
+      setNotesByPortLoaded((prev) => { const n = new Set(prev); portIdsToRemove.forEach((id) => n.delete(id)); return n; });
+      setPortsLoaded((prev) => { const n = new Set(prev); hostIdsToRemove.forEach((id) => n.delete(id)); return n; });
+      setVulnsLoaded((prev) => { const n = new Set(prev); hostIdsToRemove.forEach((id) => n.delete(id)); return n; });
+      setNotesBySubnet((prev) => { const next = { ...prev }; delete next[subnetId]; return next; });
+      setNotesBySubnetLoaded((prev) => { const n = new Set(prev); n.delete(subnetId); return n; });
+      if (selectedNode?.type === "subnet" && selectedNode.id === subnetId) setSelectedNode(null);
+      if (selectedNode && (selectedNode.type === "host" || selectedNode.type === "host-ports" || selectedNode.type === "host-vulnerabilities") && hostIdsToRemove.has(selectedNode.type === "host" ? selectedNode.id : selectedNode.hostId)) setSelectedNode(null);
+      if (selectedNode?.type === "port" && portIdsToRemove.has(selectedNode.id)) setSelectedNode(null);
+      if (selectedNode?.type === "port-evidence" && portIdsToRemove.has(selectedNode.portId)) setSelectedNode(null);
+      if (selectedNode?.type === "note" && (selectedNode.targetId === subnetId || (selectedNode.target === "host" && hostIdsToRemove.has(selectedNode.targetId)))) setSelectedNode(null);
+      setToast("Subnet and all hosts, ports, evidence, and notes deleted");
       refreshLocks();
     } catch (err) {
       setLockError(String(err));
@@ -941,7 +1208,6 @@ export default function MissionDetailPage() {
     const hKey = `host:${h.id}`;
     const portsKey = `host-ports:${h.id}`;
     const vulnsKey = `host-vulns:${h.id}`;
-    const notesKey = `host-notes:${h.id}`;
     const hExp = expanded.has(hKey);
     const portsExp = expanded.has(portsKey);
     const vulnsExp = expanded.has(vulnsKey);
@@ -952,8 +1218,9 @@ export default function MissionDetailPage() {
     const notesLoad = notesLoading.has(h.id);
     const portCount = portsLoaded.has(h.id) ? ports.length : null;
     const vulnCount = vulnsLoaded.has(h.id) ? vulns.length : null;
-    const countStr =
-      portCount !== null && vulnCount !== null
+    const countStr = isUnresolvedHost(h)
+      ? ""
+      : portCount !== null && vulnCount !== null
         ? ` (${portCount} ports • ${vulnCount} vulns)`
         : portCount !== null
           ? ` (${portCount} ports)`
@@ -991,18 +1258,50 @@ export default function MissionDetailPage() {
                 { label: "Add Vulnerability", onClick: () => setVulnModal({ mode: "add", host: h }) },
                 { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "host", host: h }) },
                 { label: "Rename", onClick: () => setRenameHostModal(h) },
-                { label: "Delete", onClick: () => setStubModal({ title: "Delete", message: "Coming soon (stub)" }) },
+                { label: "Delete", onClick: () => setDeleteHostModal(h) },
               ],
             });
           }}
         >
           <span style={{ width: 14, display: "inline-block", textAlign: "center" }}>{hExp ? "▼" : "▶"}</span>
           <ReachabilityDot status={h.status} />
-          <span style={{ fontWeight: 500 }}>{h.ip}{countStr}</span>
-          {!h.subnet_id && <span style={{ color: "var(--text-dim)", fontSize: 11 }}> (unassigned)</span>}
+          <span style={{ fontWeight: 500 }}>{hostLabel(h)}{countStr}</span>
+          {!h.subnet_id && !isUnresolvedHost(h) && <span style={{ color: "var(--text-dim)", fontSize: 11 }}> (unassigned)</span>}
         </div>
         {hExp && (
           <>
+            {(() => {
+              if (!notesLoaded.has(h.id) && !notesLoading.has(h.id)) loadNotesForHost(h.id);
+              if (notesLoading.has(h.id)) return <div key={`host-notes-load-${h.id}`} className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 1), color: "var(--text-muted)" }}>Loading notes…</div>;
+              return (notesByHost[h.id] ?? []).map((n) => {
+                const isSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "host";
+                const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
+                return (
+                  <div
+                    key={n.id}
+                    className={"theme-tree-node" + (isSel ? " selected" : "")}
+                    style={{ ...nodeStyle(baseDepth + 1), color: "var(--text-muted)" }}
+                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "note", id: n.id, target: "host", targetId: h.id }); }}
+                    onContextMenu={(ev) => {
+                      ev.preventDefault();
+                      ev.stopPropagation();
+                      setContextMenu({
+                        x: ev.clientX,
+                        y: ev.clientY,
+                        items: [
+                          { label: "Edit", onClick: () => setNoteModal({ mode: "edit", target: "host", host: h, note: n }) },
+                          { label: "Delete", onClick: () => setDeleteNoteModal({ note: n, target: "host", host: h }) },
+                          { label: "Print Note", onClick: () => setNotePrintView({ note: n, target: "host", host: h }) },
+                        ],
+                      });
+                    }}
+                  >
+                    <span style={{ width: 14 }}>≡</span>
+                    <span style={{ fontStyle: "italic" }}>{noteTitle}{noteTitle.length >= 40 ? "…" : ""}</span>
+                  </div>
+                );
+              });
+            })()}
             <div
               className={"theme-tree-node" + (selectedNode?.type === "host-ports" && selectedNode.hostId === h.id ? " selected" : "")}
               style={nodeStyle(baseDepth + 1)}
@@ -1033,32 +1332,149 @@ export default function MissionDetailPage() {
                   <div className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 2), color: "var(--text-muted)" }}>Loading…</div>
                 ) : (
                   ports.map((p) => {
+                    const portEvKey = `port-evidence:${p.id}`;
+                    const portEvExp = expanded.has(portEvKey);
+                    const evList = evidenceByPort[p.id] ?? [];
+                    const evLoad = evidenceLoading.has(p.id);
+                    const evLoaded = evidenceLoaded.has(p.id);
                     const isSel = selectedNode?.type === "port" && selectedNode.id === p.id;
+                    const evCount = evLoaded ? evList.length : null;
                     return (
-                      <div
-                        key={p.id}
-                        className={"theme-tree-node" + (isSel ? " selected" : "")}
-                        style={{ ...nodeStyle(baseDepth + 2), color: portSeverity(h.id, p.id) ? getSeverityColor(portSeverity(h.id, p.id)) : "var(--text)" }}
-                        onClick={(ev) => {
-                          ev.stopPropagation();
-                          setSelectedNode({ type: "port", id: p.id });
-                        }}
-                        onContextMenu={(ev) => {
-                          ev.preventDefault();
-                          ev.stopPropagation();
-                          setContextMenu({
-                            x: ev.clientX,
-                            y: ev.clientY,
-                            items: [
-                              { label: "Edit Port", onClick: () => setPortModal({ mode: "edit", host: h, port: p }) },
-                              { label: "Delete Port", onClick: () => setDeletePortModal({ port: p, host: h }) },
-                            ],
-                          });
-                        }}
-                      >
-                        <span style={{ width: 14 }}>•</span>
-                        {p.number}/{p.protocol}
-                        {p.service_name && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> {p.service_name}</span>}
+                      <div key={p.id}>
+                        <div
+                          className={"theme-tree-node" + (isSel ? " selected" : "")}
+                          style={{ ...nodeStyle(baseDepth + 2), color: portSeverity(h.id, p.id) ? getSeverityColor(portSeverity(h.id, p.id)) : "var(--text)" }}
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            toggleExpand(portEvKey, () => loadEvidenceForPort(p.id));
+                            setSelectedNode({ type: "port", id: p.id });
+                          }}
+                          onContextMenu={(ev) => {
+                            ev.preventDefault();
+                            ev.stopPropagation();
+                            if (!notesByPortLoaded.has(p.id) && !notesByPortLoading.has(p.id)) loadNotesForPort(p.id);
+                            setContextMenu({
+                              x: ev.clientX,
+                              y: ev.clientY,
+                              items: [
+                                { label: "Edit Port", onClick: () => setPortModal({ mode: "edit", host: h, port: p }) },
+                                { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "port", port: p, host: h }) },
+                                { label: "Delete Port", onClick: () => setDeletePortModal({ port: p, host: h }) },
+                              ],
+                            });
+                          }}
+                        >
+                          <span style={{ width: 14 }}>{portEvExp ? "▼" : "▶"}</span>
+                          {p.number}/{p.protocol}
+                          {p.service_name && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> {p.service_name}</span>}
+                          {evCount !== null && evCount > 0 && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({evCount})</span>}
+                        </div>
+                        {portEvExp && (
+                          <>
+                            {(() => {
+                              if (!notesByPortLoaded.has(p.id) && !notesByPortLoading.has(p.id)) loadNotesForPort(p.id);
+                              if (notesByPortLoading.has(p.id)) return <div key={`port-notes-load-${p.id}`} className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 3), color: "var(--text-muted)" }}>Loading notes…</div>;
+                              return (notesByPort[p.id] ?? []).map((n) => {
+                                const isNoteSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "port";
+                                const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
+                                return (
+                                  <div
+                                    key={n.id}
+                                    className={"theme-tree-node" + (isNoteSel ? " selected" : "")}
+                                    style={{ ...nodeStyle(baseDepth + 3), color: "var(--text-muted)" }}
+                                    onClick={(evt) => { evt.stopPropagation(); setSelectedNode({ type: "note", id: n.id, target: "port", targetId: p.id }); }}
+                                    onContextMenu={(evt) => {
+                                      evt.preventDefault();
+                                      evt.stopPropagation();
+                                      setContextMenu({
+                                        x: evt.clientX,
+                                        y: evt.clientY,
+                                        items: [
+                                          { label: "Edit", onClick: () => setNoteModal({ mode: "edit", target: "port", port: p, host: h, note: n }) },
+                                          { label: "Delete", onClick: () => setDeleteNoteModal({ note: n, target: "port", port }) },
+                                          { label: "Print Note", onClick: () => setNotePrintView({ note: n, target: "port", host, port }) },
+                                        ],
+                                      });
+                                    }}
+                                  >
+                                    <span style={{ width: 14 }}>≡</span>
+                                    <span style={{ fontStyle: "italic" }}>{noteTitle}{noteTitle.length >= 40 ? "…" : ""}</span>
+                                  </div>
+                                );
+                              });
+                            })()}
+                            {evLoad ? (
+                              <div className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 3), color: "var(--text-muted)" }}>Loading…</div>
+                            ) : evList.length === 0 ? (
+                              <div className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 3), color: "var(--text-dim)", fontStyle: "italic" }}>No evidence</div>
+                            ) : (
+                              evList.map((ev) => {
+                                const evSel = selectedNode?.type === "port-evidence" && selectedNode.id === ev.id;
+                                const label = ev.caption || ev.filename;
+                                return (
+                                  <div key={ev.id}>
+                                    <div
+                                      className={"theme-tree-node" + (evSel ? " selected" : "")}
+                                      style={nodeStyle(baseDepth + 3)}
+                                      onClick={(evt) => {
+                                        evt.stopPropagation();
+                                        setSelectedNode({ type: "port-evidence", id: ev.id, portId: p.id, hostId: h.id });
+                                      }}
+                                      onContextMenu={(evt) => {
+                                        evt.preventDefault();
+                                        evt.stopPropagation();
+                                        setContextMenu({
+                                          x: evt.clientX,
+                                          y: evt.clientY,
+                                          items: [
+                                            { label: "Add note", onClick: () => setNoteModal({ mode: "add", target: "evidence", evidence: ev }) },
+                                            { label: "Delete", onClick: () => handleDeleteEvidence(p.id, ev.id, h.id) },
+                                          ],
+                                        });
+                                      }}
+                                    >
+                                      <span style={{ width: 14 }}>•</span>
+                                      <span style={{ fontSize: 13 }}>{label}</span>
+                                    </div>
+                                    {/* Evidence notes as child nodes */}
+                                    {(() => {
+                                      if (!notesByEvidenceLoaded.has(ev.id) && !notesByEvidenceLoading.has(ev.id)) loadNotesForEvidence(ev.id);
+                                      if (notesByEvidenceLoading.has(ev.id)) return <div key={`ev-notes-load-${ev.id}`} className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 4), color: "var(--text-muted)" }}>Loading…</div>;
+                                      return (notesByEvidence[ev.id] ?? []).map((n) => {
+                                        const isNoteSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "evidence";
+                                        const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
+                                        return (
+                                          <div
+                                            key={n.id}
+                                            className={"theme-tree-node" + (isNoteSel ? " selected" : "")}
+                                            style={{ ...nodeStyle(baseDepth + 4), color: "var(--text-muted)" }}
+                                            onClick={(evt) => { evt.stopPropagation(); setSelectedNode({ type: "note", id: n.id, target: "evidence", targetId: ev.id }); }}
+                                            onContextMenu={(evt) => {
+                                              evt.preventDefault();
+                                              evt.stopPropagation();
+                                              setContextMenu({
+                                                x: evt.clientX,
+                                                y: evt.clientY,
+                                                items: [
+                                                  { label: "Edit", onClick: () => setNoteModal({ mode: "edit", target: "evidence", evidence: ev, note: n }) },
+                                                  { label: "Delete", onClick: () => setDeleteNoteModal({ note: n, target: "evidence", evidence: ev }) },
+                                                  { label: "Print Note", onClick: () => setNotePrintView({ note: n, target: "evidence", evidence: ev }) },
+                                                ],
+                                              });
+                                            }}
+                                          >
+                                            <span style={{ width: 14 }}>≡</span>
+                                            <span style={{ fontStyle: "italic" }}>{noteTitle}{noteTitle.length >= 40 ? "…" : ""}</span>
+                                          </div>
+                                        );
+                                      });
+                                    })()}
+                                  </div>
+                                );
+                              })
+                            )}
+                          </>
+                        )}
                       </div>
                     );
                   })
@@ -1130,72 +1546,6 @@ export default function MissionDetailPage() {
                 )}
               </>
             )}
-            <div
-              className={"theme-tree-node" + (selectedNode?.type === "host-notes" && selectedNode.hostId === h.id ? " selected" : "")}
-              style={nodeStyle(baseDepth + 1)}
-              onClick={(ev) => {
-                ev.stopPropagation();
-                toggleExpand(notesKey, () => loadNotesForHost(h.id));
-                setSelectedNode({ type: "host-notes", hostId: h.id });
-              }}
-              onContextMenu={(ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                if (!notesLoaded.has(h.id) && !notesLoading.has(h.id)) loadNotesForHost(h.id);
-                setContextMenu({
-                  x: ev.clientX,
-                  y: ev.clientY,
-                  items: [{ label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "host", host: h }) }],
-                });
-              }}
-            >
-              <span style={{ width: 14, textAlign: "center" }}>{expanded.has(notesKey) ? "▼" : "▶"}</span>
-              <span style={{ opacity: 0.8 }}>{ICON.notes}</span>
-              <span>Notes</span>
-              {notesLoad && <Spinner />}
-              {notesLoaded.has(h.id) && !notesLoad && <span style={{ color: "var(--text-muted)", fontSize: 11 }}>({(notesByHost[h.id] ?? []).length})</span>}
-            </div>
-            {expanded.has(notesKey) && (
-              <>
-                {notesLoad ? (
-                  <div className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 2), color: "var(--text-muted)" }}>Loading…</div>
-                ) : (notesByHost[h.id] ?? []).length === 0 ? (
-                  <div className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 2), color: "var(--text-dim)", fontStyle: "italic" }}>None</div>
-                ) : (
-                    (notesByHost[h.id] ?? []).map((n) => {
-                    const isSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "host" && selectedNode.targetId === h.id;
-                    const noteTitle = n.title || (n.body_md?.split("\n")[0]?.slice(0, 30) ?? "Untitled");
-                    return (
-                      <div
-                        key={n.id}
-                        className={"theme-tree-node" + (isSel ? " selected" : "")}
-                        style={nodeStyle(baseDepth + 2)}
-                        onClick={(ev) => {
-                          ev.stopPropagation();
-                          setSelectedNode({ type: "note", id: n.id, target: "host", targetId: h.id });
-                        }}
-                        onContextMenu={(ev) => {
-                          ev.preventDefault();
-                          ev.stopPropagation();
-                          setContextMenu({
-                            x: ev.clientX,
-                            y: ev.clientY,
-                            items: [
-                              { label: "Edit", onClick: () => setNoteModal({ mode: "edit", target: "host", host: h, note: n }) },
-                              { label: "Delete", onClick: () => setDeleteNoteModal({ note: n, target: "host", host: h }) },
-                              { label: "Print Note", onClick: () => setNotePrintView({ note: n, target: "host", host: h }) },
-                            ],
-                          });
-                        }}
-                      >
-                        <span style={{ width: 14 }}>•</span>
-                        {noteTitle}{noteTitle.length >= 30 ? "…" : ""}
-                      </div>
-                    );
-                  })
-                )}
-              </>
-            )}
           </>
         )}
       </div>
@@ -1209,11 +1559,23 @@ export default function MissionDetailPage() {
           ? "Scope"
           : noteModal.target === "subnet" && noteModal.subnet
             ? `Subnet: ${noteModal.subnet.cidr}${noteModal.subnet.name ? ` (${noteModal.subnet.name})` : ""}`
-            : noteModal.host
-              ? `Host: ${noteModal.host.ip}${noteModal.host.dns_name ? ` (${noteModal.host.dns_name})` : ""}`
-              : "";
+            : noteModal.target === "port" && noteModal.port && noteModal.host
+              ? `Port: ${noteModal.port.number}/${noteModal.port.protocol} on ${hostLabel(noteModal.host)}`
+              : noteModal.target === "evidence" && noteModal.evidence
+                ? `Evidence: ${noteModal.evidence.caption || noteModal.evidence.filename}`
+                : noteModal.host
+                  ? `Host: ${hostLabel(noteModal.host)}`
+                  : "";
       const targetId =
-        noteModal.target === "scope" ? missionId : noteModal.target === "subnet" ? noteModal.subnet!.id : noteModal.host!.id;
+        noteModal.target === "scope"
+          ? missionId
+          : noteModal.target === "subnet"
+            ? noteModal.subnet!.id
+            : noteModal.target === "port"
+              ? noteModal.port!.id
+              : noteModal.target === "evidence"
+                ? noteModal.evidence!.id
+                : noteModal.host!.id;
       return (
         <NoteEditorPanel
           contextLabel={contextLabel}
@@ -1230,59 +1592,6 @@ export default function MissionDetailPage() {
         </div>
       );
     }
-    if (selectedNode.type === "scope-notes") {
-      return (
-        <div style={{ padding: 24 }}>
-          <h2 style={{ margin: "0 0 16px", fontSize: "1.25rem" }}>Scope Notes</h2>
-          <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>Right-click to add a note.</p>
-          {scopeNotesLoading ? (
-            <p style={{ color: "var(--text-muted)" }}>Loading…</p>
-          ) : scopeNotes.length === 0 ? (
-            <p style={{ color: "var(--text-muted)" }}>No notes for this scope.</p>
-          ) : (
-            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {scopeNotes.map((n) => (
-                <li
-                  key={n.id}
-                  style={{ marginBottom: 8, padding: 12, backgroundColor: "var(--bg-panel)", borderRadius: 8, border: "1px solid var(--border)", cursor: "pointer" }}
-                  onClick={() => setSelectedNode({ type: "note", id: n.id, target: "scope", targetId: missionId })}
-                >
-                  {n.title || "Untitled"}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      );
-    }
-
-    if (selectedNode.type === "subnet-notes") {
-      const subnet = subnets.find((s) => s.id === selectedNode.subnetId);
-      if (!subnet) return null;
-      const notes = notesBySubnet[subnet.id] ?? [];
-      return (
-        <div style={{ padding: 24 }}>
-          <h2 style={{ margin: "0 0 16px", fontSize: "1.25rem" }}>Notes — {subnet.cidr}{subnet.name ? ` (${subnet.name})` : ""}</h2>
-          <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>Right-click to add a note.</p>
-          {notes.length === 0 ? (
-            <p style={{ color: "var(--text-muted)" }}>No notes for this subnet.</p>
-          ) : (
-            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {notes.map((n) => (
-                <li
-                  key={n.id}
-                  style={{ marginBottom: 8, padding: 12, backgroundColor: "var(--bg-panel)", borderRadius: 8, border: "1px solid var(--border)", cursor: "pointer" }}
-                  onClick={() => setSelectedNode({ type: "note", id: n.id, target: "subnet", targetId: subnet.id })}
-                >
-                  {n.title || "Untitled"}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      );
-    }
-
     if (selectedNode.type === "vulnerabilities") {
       return (
         <div style={{ padding: 24 }}>
@@ -1346,7 +1655,7 @@ export default function MissionDetailPage() {
             {affectedHosts.map((h) => (
               <li key={h.id} style={{ marginBottom: 4 }}>
                 <button type="button" className="theme-btn theme-btn-ghost" style={{ padding: "4px 0", textAlign: "left" }} onClick={() => setSelectedNode({ type: "host", id: h.id })}>
-                  {h.ip}{h.dns_name ? ` (${h.dns_name})` : ""}
+                  {hostLabel(h)}
                 </button>
               </li>
             ))}
@@ -1369,6 +1678,35 @@ export default function MissionDetailPage() {
         </div>
       );
     }
+    if (selectedNode.type === "port-evidence") {
+      const evList = evidenceByPort[selectedNode.portId] ?? [];
+      const ev = evList.find((e) => e.id === selectedNode.id);
+      const host = hosts.find((h) => h.id === selectedNode.hostId);
+      const port = host ? (portsByHost[host.id] ?? []).find((p) => p.id === selectedNode.portId) : null;
+      if (!ev || !host) return null;
+      const isImage = !!(ev.mime && ev.mime.toLowerCase().startsWith("image/"));
+      return (
+        <div style={{ padding: 24 }}>
+          <h2 style={{ margin: "0 0 8px", fontSize: "1.25rem" }}>{ev.caption || ev.filename}</h2>
+          <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 16 }}>
+            {hostLabel(host)} • {port ? `${port.number}/${port.protocol}` : ""}
+          </p>
+          {isImage ? (
+            <a href={apiUrl(`/api/ports/${selectedNode.portId}/attachments/${ev.id}`)} target="_blank" rel="noopener noreferrer">
+              <img
+                src={apiUrl(`/api/ports/${selectedNode.portId}/attachments/${ev.id}`)}
+                alt={ev.caption || ev.filename}
+                style={{ maxWidth: "100%", borderRadius: 8, border: "1px solid var(--border)" }}
+              />
+            </a>
+          ) : (
+            <div style={{ fontSize: 15, lineHeight: 1.6 }}>{ev.caption || ev.filename}</div>
+          )}
+        </div>
+      );
+    }
+    if (selectedNode.type === "unresolved")
+      return <div style={{ padding: 24, color: "var(--text-muted)" }}>Hosts with DNS but unresolved IP. Expand to see hosts.</div>;
     if (selectedNode.type === "evidence")
       return <div style={{ padding: 24, color: "var(--text-muted)" }}>Evidence (coming soon)</div>;
     if (selectedNode.type === "jobs")
@@ -1401,8 +1739,7 @@ export default function MissionDetailPage() {
                     onClick={() => setSelectedNode({ type: "host", id: h.id })}
                   >
                     <ReachabilityDot status={h.status} />
-                    <span style={{ marginLeft: 8, fontWeight: 600 }}>{h.ip}</span>
-                    {h.dns_name ? <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 2 }}>{h.dns_name}</div> : <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 2 }}>Unresolved</div>}
+                    <span style={{ marginLeft: 8, fontWeight: 600 }}>{hostLabel(h)}</span>
                     {lock && <span style={{ fontSize: 12, color: "var(--accent)", marginLeft: 8 }}>Locked by {lock.locked_by_username ?? "?"}</span>}
                   </div>
                 </li>
@@ -1487,42 +1824,17 @@ export default function MissionDetailPage() {
       );
     }
 
-    if (selectedNode.type === "host-notes") {
-      const host = hosts.find((h) => h.id === selectedNode.hostId);
-      if (!host) return null;
-      const notes = notesByHost[host.id] ?? [];
-      return (
-        <div style={{ padding: 24 }}>
-          <h2 style={{ margin: "0 0 16px", fontSize: "1.25rem" }}>Notes — {host.ip}</h2>
-          <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>Right-click to add a note.</p>
-          {notesLoading.has(host.id) ? (
-            <p style={{ color: "var(--text-muted)" }}>Loading…</p>
-          ) : notes.length === 0 ? (
-            <p style={{ color: "var(--text-muted)" }}>No notes for this host.</p>
-          ) : (
-            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {notes.map((n) => (
-                <li
-                  key={n.id}
-                  style={{ marginBottom: 8, padding: 12, backgroundColor: "var(--bg-panel)", borderRadius: 8, border: "1px solid var(--border)", cursor: "pointer" }}
-                  onClick={() => setSelectedNode({ type: "note", id: n.id, target: "host", targetId: host.id })}
-                >
-                  {n.title || "Untitled"}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      );
-    }
-
     if (selectedNode.type === "note") {
       const note =
         selectedNode.target === "scope"
           ? scopeNotes.find((n) => n.id === selectedNode.id)
           : selectedNode.target === "subnet"
             ? (notesBySubnet[selectedNode.targetId] ?? []).find((n) => n.id === selectedNode.id)
-            : (notesByHost[selectedNode.targetId] ?? []).find((n) => n.id === selectedNode.id);
+            : selectedNode.target === "port"
+              ? (notesByPort[selectedNode.targetId] ?? []).find((n) => n.id === selectedNode.id)
+              : selectedNode.target === "evidence"
+                ? (notesByEvidence[selectedNode.targetId] ?? []).find((n) => n.id === selectedNode.id)
+                : (notesByHost[selectedNode.targetId] ?? []).find((n) => n.id === selectedNode.id);
       if (!note) return <div style={{ padding: 24, color: "var(--text-muted)" }}>Note not found.</div>;
       const contextLabel =
         selectedNode.target === "scope"
@@ -1532,10 +1844,21 @@ export default function MissionDetailPage() {
                 const s = subnets.find((x) => x.id === selectedNode.targetId);
                 return s ? `Subnet: ${s.cidr}${s.name ? ` (${s.name})` : ""}` : "Subnet";
               })()
-            : (() => {
-                const h = hosts.find((x) => x.id === selectedNode.targetId);
-                return h ? `Host: ${h.ip}${h.dns_name ? ` (${h.dns_name})` : ""}` : "Host";
-              })();
+            : selectedNode.target === "port"
+              ? (() => {
+                  const port = Object.values(portsByHost).flat().find((p) => p.id === selectedNode.targetId);
+                  const host = port ? hosts.find((h) => (portsByHost[h.id] ?? []).some((p) => p.id === port.id)) : null;
+                  return port && host ? `Port: ${port.number}/${port.protocol} on ${hostLabel(host)}` : "Port";
+                })()
+              : selectedNode.target === "evidence"
+                ? (() => {
+                    const ev = Object.values(evidenceByPort).flat().find((e) => e.id === selectedNode.targetId);
+                    return ev ? `Evidence: ${ev.caption || ev.filename}` : "Evidence";
+                  })()
+                : (() => {
+                    const h = hosts.find((x) => x.id === selectedNode.targetId);
+                    return h ? `Host: ${hostLabel(h)}` : "Host";
+                  })();
       const noteLock = getLockForRecord("note", note.id);
       return (
         <div style={{ padding: 24 }}>
@@ -1605,7 +1928,7 @@ export default function MissionDetailPage() {
             {affectedHosts.map((h) => (
               <li key={h.id} style={{ marginBottom: 4 }}>
                 <button type="button" className="theme-btn theme-btn-ghost" style={{ padding: "4px 0", textAlign: "left" }} onClick={() => setSelectedNode({ type: "host", id: h.id })}>
-                  {h.ip}{h.dns_name ? ` (${h.dns_name})` : ""}
+                  {hostLabel(h)}
                 </button>
               </li>
             ))}
@@ -1646,7 +1969,7 @@ export default function MissionDetailPage() {
         <div style={{ padding: 24 }}>
           <h2 style={{ margin: "0 0 8px", fontSize: "1.25rem" }}>{port.number}/{port.protocol}</h2>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
-            <span style={{ color: "var(--text-muted)", fontSize: 14 }}>Host: {host.ip}{host.dns_name ? ` (${host.dns_name})` : ""}</span>
+            <span style={{ color: "var(--text-muted)", fontSize: 14 }}>Host: {hostLabel(host)}</span>
             <span style={{ fontSize: 13, padding: "2px 8px", borderRadius: 4, backgroundColor: "var(--bg-panel)", border: "1px solid var(--border)" }}>
               {port.state ?? "unknown"}
             </span>
@@ -1689,7 +2012,110 @@ export default function MissionDetailPage() {
               />
             </>
           ) : null}
-          <PortAttachmentsSection portId={port.id} canEdit={!lockedByOther} onRefresh={() => loadPortsForHost(host.id)} />
+          {(() => {
+            const evList = evidenceByPort[port.id] ?? [];
+            const screenshots = evList.filter(
+              (e) => (e.source || "").toLowerCase() === "gowitness" && e.mime && e.mime.toLowerCase().startsWith("image/")
+            );
+            const metadataItems = evList.filter(
+              (e) => (e.source || "").toLowerCase() === "gowitness" && (!e.mime || !e.mime.toLowerCase().startsWith("image/"))
+            );
+            const hasEvidence = screenshots.length > 0 || metadataItems.length > 0;
+            if (!hasEvidence) return null;
+            return (
+              <div style={{ marginBottom: 24 }}>
+                <h3 style={{ fontSize: "1rem", marginBottom: 12 }}>Evidence</h3>
+                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  {metadataItems.map((ev) => {
+                    if (!notesByEvidenceLoaded.has(ev.id) && !notesByEvidenceLoading.has(ev.id)) loadNotesForEvidence(ev.id);
+                    const evNotes = notesByEvidence[ev.id] ?? [];
+                    return (
+                      <div key={ev.id} style={{ padding: "8px 12px", backgroundColor: "var(--bg-panel)", borderRadius: 8, border: "1px solid var(--border)" }}>
+                        <span style={{ fontSize: 14, fontWeight: 500 }}>{ev.caption || ev.filename}</span>
+                        {evNotes.length > 0 && (
+                          <div style={{ marginTop: 8 }}>
+                            {evNotes.map((n) => (
+                              <div key={n.id} style={{ marginBottom: 8, padding: "8px 12px", backgroundColor: "var(--bg)", borderRadius: 6, border: "1px solid var(--border)" }}>
+                                <div className="note-markdown-content" style={{ fontSize: 13 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(n.body_md ?? "") }} />
+                                {!lockedByOther && (
+                                  <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                                    <button type="button" className="theme-btn theme-btn-ghost" style={{ fontSize: 11 }} onClick={() => setNoteModal({ mode: "edit", target: "evidence", evidence: ev, note: n })}>Edit</button>
+                                    <button type="button" className="theme-btn theme-btn-ghost" style={{ fontSize: 11, color: "var(--error)" }} onClick={() => setDeleteNoteModal({ note: n, target: "evidence", evidence: ev })}>Delete</button>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {!lockedByOther && (
+                          <div style={{ marginTop: 8 }}>
+                            <button type="button" className="theme-btn theme-btn-ghost" style={{ fontSize: 12 }} onClick={() => setNoteModal({ mode: "add", target: "evidence", evidence: ev })}>
+                              Add note
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {screenshots.map((ev) => {
+                    if (!notesByEvidenceLoaded.has(ev.id) && !notesByEvidenceLoading.has(ev.id)) loadNotesForEvidence(ev.id);
+                    const evNotes = notesByEvidence[ev.id] ?? [];
+                    return (
+                      <div key={ev.id}>
+                        <a
+                          href={apiUrl(`/api/ports/${port.id}/attachments/${ev.id}`)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ display: "block" }}
+                        >
+                          <img
+                            src={apiUrl(`/api/ports/${port.id}/attachments/${ev.id}`)}
+                            alt={ev.caption || ev.filename}
+                            style={{ maxWidth: "100%", borderRadius: 8, border: "1px solid var(--border)", display: "block" }}
+                          />
+                        </a>
+                        {ev.caption && (
+                          <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--text-muted)" }}>{ev.caption}</p>
+                        )}
+                        {evNotes.length > 0 && (
+                          <div style={{ marginTop: 8 }}>
+                            {evNotes.map((n) => (
+                              <div key={n.id} style={{ marginBottom: 8, padding: "8px 12px", backgroundColor: "var(--bg)", borderRadius: 6, border: "1px solid var(--border)" }}>
+                                <div className="note-markdown-content" style={{ fontSize: 13 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(n.body_md ?? "") }} />
+                                {!lockedByOther && (
+                                  <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                                    <button type="button" className="theme-btn theme-btn-ghost" style={{ fontSize: 11 }} onClick={() => setNoteModal({ mode: "edit", target: "evidence", evidence: ev, note: n })}>Edit</button>
+                                    <button type="button" className="theme-btn theme-btn-ghost" style={{ fontSize: 11, color: "var(--error)" }} onClick={() => setDeleteNoteModal({ note: n, target: "evidence", evidence: ev })}>Delete</button>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {!lockedByOther && (
+                          <div style={{ marginTop: 8 }}>
+                            <button type="button" className="theme-btn theme-btn-ghost" style={{ fontSize: 12 }} onClick={() => setNoteModal({ mode: "add", target: "evidence", evidence: ev })}>
+                              Add note
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+          <PortAttachmentsSection
+            portId={port.id}
+            canEdit={!lockedByOther}
+            onRefresh={() => {
+              loadPortsForHost(host.id);
+              setEvidenceLoaded((p) => { const n = new Set(p); n.delete(port.id); return n; });
+              setEvidenceByPort((prev) => { const next = { ...prev }; delete next[port.id]; return next; });
+              loadEvidenceForPort(port.id);
+            }}
+          />
         </div>
       );
     }
@@ -1721,6 +2147,7 @@ export default function MissionDetailPage() {
                   { label: "Add Subnet", onClick: () => setAddSubnetModal(true) },
                   { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "scope" }) },
                   { label: "Import Hosts", onClick: () => setImportHostsModal({ type: "scope" }) },
+                  { label: "Import GoWitness", onClick: () => setImportGoWitnessModal(true) },
                 ],
               });
             }}
@@ -1730,72 +2157,38 @@ export default function MissionDetailPage() {
           </div>
           {expanded.has("scope") && (
             <>
-              <div
-                className={"theme-tree-node" + (selectedNode?.type === "scope-notes" ? " selected" : "")}
-                style={nodeStyle(1)}
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  toggleExpand("scope-notes", () => loadScopeNotes());
-                  setSelectedNode({ type: "scope-notes" });
-                }}
-                onContextMenu={(ev) => {
-                  ev.preventDefault();
-                  ev.stopPropagation();
-                  if (!scopeNotesLoaded && !scopeNotesLoading) loadScopeNotes();
-                  setContextMenu({
-                    x: ev.clientX,
-                    y: ev.clientY,
-                    items: [{ label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "scope" }) }],
-                  });
-                }}
-              >
-                <span style={{ width: 14, textAlign: "center" }}>{expanded.has("scope-notes") ? "▼" : "▶"}</span>
-                <span style={{ opacity: 0.8 }}>{ICON.notes}</span>
-                <span>Notes</span>
-                {scopeNotesLoading && <Spinner />}
-                {scopeNotesLoaded && !scopeNotesLoading && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({scopeNotes.length})</span>}
-              </div>
-              {expanded.has("scope-notes") && (
-                <>
-                  {scopeNotesLoading ? (
-                    <div className="theme-tree-node" style={{ ...nodeStyle(2), color: "var(--text-muted)" }}>Loading…</div>
-                  ) : scopeNotes.length === 0 ? (
-                    <div className="theme-tree-node" style={{ ...nodeStyle(2), color: "var(--text-dim)", fontStyle: "italic" }}>None</div>
-                  ) : (
-                    scopeNotes.map((n) => {
-                      const isSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "scope";
-                      const noteTitle = n.title || (n.body_md?.split("\n")[0]?.slice(0, 30) ?? "Untitled");
-                      return (
-                        <div
-                          key={n.id}
-                          className={"theme-tree-node" + (isSel ? " selected" : "")}
-                          style={nodeStyle(2)}
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            setSelectedNode({ type: "note", id: n.id, target: "scope", targetId: missionId });
-                          }}
-                          onContextMenu={(ev) => {
-                            ev.preventDefault();
-                            ev.stopPropagation();
-                            setContextMenu({
-                              x: ev.clientX,
-                              y: ev.clientY,
-                              items: [
-                                { label: "Edit", onClick: () => setNoteModal({ mode: "edit", target: "scope", note: n }) },
-                                { label: "Delete", onClick: () => setDeleteNoteModal({ note: n, target: "scope" }) },
-                                { label: "Print Note", onClick: () => setNotePrintView({ note: n, target: "scope" }) },
-                              ],
-                            });
-                          }}
-                        >
-                          <span style={{ width: 14 }}>•</span>
-                          {noteTitle}{noteTitle.length >= 30 ? "…" : ""}
-                        </div>
-                      );
-                    })
-                  )}
-                </>
-              )}
+              {(() => {
+                if (!scopeNotesLoaded && !scopeNotesLoading) loadScopeNotes();
+                if (scopeNotesLoading) return <div key="scope-notes-loading" className="theme-tree-node" style={{ ...nodeStyle(1), color: "var(--text-muted)" }}>Loading notes…</div>;
+                return scopeNotes.map((n) => {
+                  const isSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "scope";
+                  const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
+                  return (
+                    <div
+                      key={n.id}
+                      className={"theme-tree-node" + (isSel ? " selected" : "")}
+                      style={{ ...nodeStyle(1), color: "var(--text-muted)" }}
+                      onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "note", id: n.id, target: "scope", targetId: missionId }); }}
+                      onContextMenu={(ev) => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        setContextMenu({
+                          x: ev.clientX,
+                          y: ev.clientY,
+                          items: [
+                            { label: "Edit", onClick: () => setNoteModal({ mode: "edit", target: "scope", note: n }) },
+                            { label: "Delete", onClick: () => setDeleteNoteModal({ note: n, target: "scope" }) },
+                            { label: "Print Note", onClick: () => setNotePrintView({ note: n, target: "scope" }) },
+                          ],
+                        });
+                      }}
+                    >
+                      <span style={{ width: 14 }}>≡</span>
+                      <span style={{ fontStyle: "italic" }}>{noteTitle}{noteTitle.length >= 40 ? "…" : ""}</span>
+                    </div>
+                  );
+                });
+              })()}
               {subnets.map((s) => {
                 const key = `subnet:${s.id}`;
                 const isExp = expanded.has(key);
@@ -1818,7 +2211,7 @@ export default function MissionDetailPage() {
                             { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "subnet", subnet: s }) },
                             { label: "Import Hosts", onClick: () => setImportHostsModal({ type: "subnet", id: s.id, cidr: s.cidr, name: s.name }) },
                             { label: "Rename", onClick: () => setRenameSubnetModal(s) },
-                            { label: "Delete", onClick: () => setStubModal({ title: "Delete Subnet", message: "Coming soon (stub)" }) },
+                            { label: "Delete", onClick: () => setDeleteSubnetModal(s) },
                           ],
                         });
                       }}
@@ -1830,72 +2223,65 @@ export default function MissionDetailPage() {
                     </div>
                     {isExp && (
                       <>
-                        <div
-                          className={"theme-tree-node" + (selectedNode?.type === "subnet-notes" && selectedNode.subnetId === s.id ? " selected" : "")}
-                          style={nodeStyle(2)}
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            toggleExpand(`subnet-notes:${s.id}`);
-                            setSelectedNode({ type: "subnet-notes", subnetId: s.id });
-                          }}
-                          onContextMenu={(ev) => {
-                            ev.preventDefault();
-                            ev.stopPropagation();
-                            setContextMenu({
-                              x: ev.clientX,
-                              y: ev.clientY,
-                              items: [{ label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "subnet", subnet: s }) }],
-                            });
-                          }}
-                        >
-                          <span style={{ width: 14, textAlign: "center" }}>{expanded.has(`subnet-notes:${s.id}`) ? "▼" : "▶"}</span>
-                          <span style={{ opacity: 0.8 }}>{ICON.notes}</span>
-                          <span>Notes</span>
-                          <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({(notesBySubnet[s.id] ?? []).length})</span>
-                        </div>
-                        {expanded.has(`subnet-notes:${s.id}`) && (
-                          (notesBySubnet[s.id] ?? []).length === 0 ? (
-                            <div className="theme-tree-node" style={{ ...nodeStyle(3), color: "var(--text-dim)", fontStyle: "italic" }}>None</div>
-                          ) : (
-                            (notesBySubnet[s.id] ?? []).map((n) => {
-                              const isNoteSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "subnet" && selectedNode.targetId === s.id;
-                              const noteTitle = n.title || (n.body_md?.split("\n")[0]?.slice(0, 30) ?? "Untitled");
-                              return (
-                                <div
-                                  key={n.id}
-                                  className={"theme-tree-node" + (isNoteSel ? " selected" : "")}
-                                  style={nodeStyle(3)}
-                                  onClick={(ev) => {
-                                    ev.stopPropagation();
-                                    setSelectedNode({ type: "note", id: n.id, target: "subnet", targetId: s.id });
-                                  }}
-                                  onContextMenu={(ev) => {
-                                    ev.preventDefault();
-                                    ev.stopPropagation();
-                                    setContextMenu({
-                                      x: ev.clientX,
-                                      y: ev.clientY,
-                                      items: [
-                                        { label: "Edit", onClick: () => setNoteModal({ mode: "edit", target: "subnet", subnet: s, note: n }) },
-                                        { label: "Delete", onClick: () => setDeleteNoteModal({ note: n, target: "subnet", subnet: s }) },
-                                        { label: "Print Note", onClick: () => setNotePrintView({ note: n, target: "subnet", subnet: s }) },
-                                      ],
-                                    });
-                                  }}
-                                >
-                                  <span style={{ width: 14 }}>•</span>
-                                  {noteTitle}{noteTitle.length >= 30 ? "…" : ""}
-                                </div>
-                              );
-                            })
-                          )
-                        )}
+                        {(() => {
+                          if (!notesBySubnetLoaded.has(s.id) && !notesBySubnetLoading.has(s.id)) loadNotesForSubnet(s.id);
+                          if (notesBySubnetLoading.has(s.id)) return <div key={`subnet-notes-${s.id}`} className="theme-tree-node" style={{ ...nodeStyle(2), color: "var(--text-muted)" }}>Loading notes…</div>;
+                          return (notesBySubnet[s.id] ?? []).map((n) => {
+                            const isNoteSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "subnet" && selectedNode.targetId === s.id;
+                            const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
+                            return (
+                              <div
+                                key={n.id}
+                                className={"theme-tree-node" + (isNoteSel ? " selected" : "")}
+                                style={{ ...nodeStyle(2), color: "var(--text-muted)" }}
+                                onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "note", id: n.id, target: "subnet", targetId: s.id }); }}
+                                onContextMenu={(ev) => {
+                                  ev.preventDefault();
+                                  ev.stopPropagation();
+                                  setContextMenu({
+                                    x: ev.clientX,
+                                    y: ev.clientY,
+                                    items: [
+                                      { label: "Edit", onClick: () => setNoteModal({ mode: "edit", target: "subnet", subnet: s, note: n }) },
+                                      { label: "Delete", onClick: () => setDeleteNoteModal({ note: n, target: "subnet", subnet: s }) },
+                                      { label: "Print Note", onClick: () => setNotePrintView({ note: n, target: "subnet", subnet: s }) },
+                                    ],
+                                  });
+                                }}
+                              >
+                                <span style={{ width: 14 }}>≡</span>
+                                <span style={{ fontStyle: "italic" }}>{noteTitle}{noteTitle.length >= 40 ? "…" : ""}</span>
+                              </div>
+                            );
+                          });
+                        })()}
                         {(hostsBySubnet[s.id] ?? []).map((h) => renderTreeHost(h, 2))}
                       </>
                     )}
                   </div>
                 );
               })}
+              {/* Unresolved: hosts where DNS exists but IP is unresolved */}
+              {(hostsBySubnet["_unresolved"] ?? []).length > 0 && (
+                <div>
+                  <div
+                    className={"theme-tree-node" + (selectedNode?.type === "unresolved" ? " selected" : "")}
+                    style={{ ...nodeStyle(1), color: "var(--text-muted)", fontStyle: "italic" }}
+                    onClick={() => {
+                      toggleExpand("unresolved");
+                      setSelectedNode({ type: "unresolved" });
+                    }}
+                  >
+                    <span style={{ width: 14 }}>{expanded.has("unresolved") ? "▼" : "▶"}</span>
+                    Unresolved
+                  </div>
+                  {expanded.has("unresolved") &&
+                    (hostsBySubnet["_unresolved"] ?? []).map((h) => (
+                      <div key={h.id}>{renderTreeHost(h, 2)}</div>
+                    ))}
+                </div>
+              )}
+              {/* Unassigned: hosts with real IP but no subnet */}
               {(hostsBySubnet["_unassigned"] ?? []).map((h) => (
                 <div key={h.id}>{renderTreeHost(h, 1)}</div>
               ))}
@@ -1980,6 +2366,13 @@ export default function MissionDetailPage() {
 
       {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
       {importHostsModal && <ImportHostsModal context={importHostsModal} onClose={() => setImportHostsModal(null)} onSuccess={() => {}} />}
+      {importGoWitnessModal && (
+        <ImportGoWitnessModal
+          projectId={missionId}
+          onClose={() => setImportGoWitnessModal(false)}
+          onSuccess={() => loadData()}
+        />
+      )}
       {addSubnetModal && <AddSubnetModal onClose={() => setAddSubnetModal(false)} onSubmit={handleCreateSubnet} />}
       {addHostModal && <AddHostModal subnetId={addHostModal.subnetId} subnets={subnets} onClose={() => setAddHostModal(null)} onSubmit={handleCreateHost} />}
       {renameSubnetModal && <RenameSubnetModal subnetCidr={renameSubnetModal.cidr} subnetName={renameSubnetModal.name} onClose={() => setRenameSubnetModal(null)} onSubmit={(cidr, name) => handleRenameSubnet(renameSubnetModal.id, cidr, name)} />}
@@ -2103,11 +2496,39 @@ export default function MissionDetailPage() {
           <div style={{ backgroundColor: "var(--bg-panel)", borderRadius: 8, border: "1px solid var(--border)", padding: 24, maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
             <h2 style={{ margin: "0 0 12px", fontSize: "1.25rem", color: "var(--error)" }}>Delete port</h2>
             <p style={{ margin: "0 0 16px", color: "var(--text-muted)", fontSize: 14 }}>
-              Delete {deletePortModal.port.number}/{deletePortModal.port.protocol} on {deletePortModal.host.ip}? This cannot be undone.
+              Delete {deletePortModal.port.number}/{deletePortModal.port.protocol} on {hostLabel(deletePortModal.host)}? This cannot be undone.
             </p>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button type="button" className="theme-btn theme-btn-ghost" onClick={() => setDeletePortModal(null)}>Cancel</button>
               <button type="button" className="theme-btn theme-btn-primary" style={{ backgroundColor: "var(--error)", borderColor: "var(--error)" }} onClick={() => handleDeletePort(deletePortModal.port.id, deletePortModal.host.id)}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {deleteHostModal && (
+        <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={() => setDeleteHostModal(null)}>
+          <div style={{ backgroundColor: "var(--bg-panel)", borderRadius: 8, border: "1px solid var(--border)", padding: 24, maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ margin: "0 0 12px", fontSize: "1.25rem", color: "var(--error)" }}>Delete host</h2>
+            <p style={{ margin: "0 0 16px", color: "var(--text-muted)", fontSize: 14 }}>
+              Delete host {hostLabel(deleteHostModal)}? This will remove all ports, evidence, notes, and vulnerabilities on this host. This cannot be undone.
+            </p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="theme-btn theme-btn-ghost" onClick={() => setDeleteHostModal(null)}>Cancel</button>
+              <button type="button" className="theme-btn theme-btn-primary" style={{ backgroundColor: "var(--error)", borderColor: "var(--error)" }} onClick={() => handleDeleteHost(deleteHostModal.id)}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {deleteSubnetModal && (
+        <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={() => setDeleteSubnetModal(null)}>
+          <div style={{ backgroundColor: "var(--bg-panel)", borderRadius: 8, border: "1px solid var(--border)", padding: 24, maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ margin: "0 0 12px", fontSize: "1.25rem", color: "var(--error)" }}>Delete subnet</h2>
+            <p style={{ margin: "0 0 16px", color: "var(--text-muted)", fontSize: 14 }}>
+              Delete subnet {deleteSubnetModal.cidr}{deleteSubnetModal.name ? ` (${deleteSubnetModal.name})` : ""}? This will remove all hosts in this subnet and their ports, evidence, notes, and vulnerabilities. This cannot be undone.
+            </p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="theme-btn theme-btn-ghost" onClick={() => setDeleteSubnetModal(null)}>Cancel</button>
+              <button type="button" className="theme-btn theme-btn-primary" style={{ backgroundColor: "var(--error)", borderColor: "var(--error)" }} onClick={() => handleDeleteSubnet(deleteSubnetModal.id)}>Delete</button>
             </div>
           </div>
         </div>
@@ -2120,9 +2541,13 @@ export default function MissionDetailPage() {
               ? "Scope"
               : notePrintView.target === "subnet" && notePrintView.subnet
                 ? `Subnet: ${notePrintView.subnet.cidr}${notePrintView.subnet.name ? ` (${notePrintView.subnet.name})` : ""}`
-                : notePrintView.host
-                  ? `Host: ${notePrintView.host.ip}${notePrintView.host.dns_name ? ` (${notePrintView.host.dns_name})` : ""}`
-                  : ""
+                : notePrintView.target === "port" && notePrintView.port && notePrintView.host
+                  ? `Port: ${notePrintView.port.number}/${notePrintView.port.protocol} on ${hostLabel(notePrintView.host)}`
+                  : notePrintView.target === "evidence" && notePrintView.evidence
+                    ? `Evidence: ${notePrintView.evidence.caption || notePrintView.evidence.filename}`
+                    : notePrintView.host
+                      ? `Host: ${hostLabel(notePrintView.host)}`
+                      : ""
           }
           bodyMd={notePrintView.note.body_md}
           attachments={(notePrintView.note.attachments ?? []).map((a) => ({ id: a.id, filename: a.filename, type: a.type, url: a.url }))}
@@ -2148,7 +2573,15 @@ export default function MissionDetailPage() {
                   handleDeleteNote(
                     deleteNoteModal.note,
                     deleteNoteModal.target,
-                    deleteNoteModal.target === "scope" ? missionId : deleteNoteModal.target === "subnet" ? deleteNoteModal.subnet!.id : deleteNoteModal.host!.id
+                    deleteNoteModal.target === "scope"
+                      ? missionId
+                      : deleteNoteModal.target === "subnet"
+                        ? deleteNoteModal.subnet!.id
+                        : deleteNoteModal.target === "port"
+                          ? deleteNoteModal.port!.id
+                          : deleteNoteModal.target === "evidence"
+                            ? deleteNoteModal.evidence!.id
+                            : deleteNoteModal.host!.id
                   )
                 }
               >

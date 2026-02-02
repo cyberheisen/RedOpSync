@@ -8,6 +8,7 @@ from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.models.models import Host, Project, Subnet, User
 from app.schemas.host import HostCreate, HostUpdate, HostRead
+from app.services.audit import log_audit
 from app.services.lock import require_lock
 
 router = APIRouter()
@@ -106,6 +107,18 @@ def delete_host(
         require_lock(db, host.project_id, "host", host_id, current_user)
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    project_id = host.project_id
+    host_ip = host.ip
+    host_dns = host.dns_name
     db.delete(host)
+    log_audit(
+        db,
+        project_id=project_id,
+        user_id=current_user.id,
+        action_type="delete_host",
+        record_type="host",
+        record_id=host_id,
+        after_json={"ip": host_ip, "dns_name": host_dns},
+    )
     db.commit()
     return None
