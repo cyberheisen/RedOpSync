@@ -1,215 +1,236 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useRef, useState } from "react";
+import { apiUrl } from "../lib/api";
 
 export type ImportHostsContext =
   | { type: "scope" }
   | { type: "subnet"; id: string; cidr: string; name: string | null };
 
 type Props = {
+  projectId: string;
   context: ImportHostsContext;
   onClose: () => void;
   onSuccess: () => void;
 };
 
-const PASTE_PLACEHOLDER = `10.0.0.1
-10.0.0.2,10.0.0.3
-192.168.1.0/24
-app.example.com`;
+type ImportResult = {
+  format?: "nmap" | "gowitness" | "text";
+  hosts_created: number;
+  hosts_updated?: number;
+  ports_created: number;
+  ports_updated?: number;
+  evidence_created?: number;
+  notes_created?: number;
+  screenshots_imported?: number;
+  metadata_records_imported?: number;
+  errors: string[];
+  skipped?: number;
+};
 
-export function ImportHostsModal({ context, onClose, onSuccess }: Props) {
-  const [activeTab, setActiveTab] = useState<"paste" | "file">("paste");
-  const [pasteInput, setPasteInput] = useState("");
+export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Props) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [showPreview, setShowPreview] = useState(false);
-  const [mockHosts, setMockHosts] = useState(0);
-  const [mockSubnets, setMockSubnets] = useState(0);
-  const [mockDuplicates, setMockDuplicates] = useState(0);
-  const [showToast, setShowToast] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<ImportResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const subtext =
     context.type === "scope"
-      ? "Importing into Scope"
-      : `Importing into Subnet: ${context.cidr}${context.name ? ` (${context.name})` : ""}`;
-
-  const getInputSize = () => {
-    if (activeTab === "paste") {
-      const lines = pasteInput
-        .split(/[\n,]+/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      return lines.length;
-    }
-    return selectedFile ? 1 : 0;
-  };
-
-  const handlePreview = () => {
-    const size = getInputSize();
-    setMockHosts(Math.max(0, size * 3 + 2));
-    setMockSubnets(Math.max(0, Math.floor(size / 2)));
-    setMockDuplicates(Math.max(0, size - 1));
-    setShowPreview(true);
-  };
-
-  const handleImport = () => {
-    setShowToast(true);
-    setTimeout(() => {
-      setShowToast(false);
-      onSuccess();
-      onClose();
-    }, 1500);
-  };
+      ? "Import Nmap, GoWitness, or plain text (one host per line) into this mission."
+      : `Import into Subnet: ${context.cidr}${context.name ? ` (${context.name})` : ""}`;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const ext = file.name.split(".").pop()?.toLowerCase();
-      if (ext === "txt" || ext === "csv") {
-        setSelectedFile(file);
+    const f = e.target.files?.[0];
+    if (f) {
+      const ext = f.name.split(".").pop()?.toLowerCase();
+      if (ext === "xml" || ext === "zip" || ext === "txt") {
+        setError(null);
+        setSelectedFile(f);
+      } else {
+        setError("Use Nmap XML (.xml), ZIP (.zip), or plain text (.txt).");
+        setSelectedFile(null);
       }
     } else {
       setSelectedFile(null);
+      setError(null);
     }
   };
 
-  const handleFileClick = () => {
-    fileInputRef.current?.click();
+  const handleImport = async () => {
+    if (!selectedFile) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", selectedFile);
+      const res = await fetch(apiUrl(`/api/projects/${projectId}/import`), {
+        method: "POST",
+        credentials: "include",
+        body: fd,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(typeof data.detail === "string" ? data.detail : `Import failed (${res.status})`);
+        return;
+      }
+      setResult(data);
+      const hasData =
+        (data.hosts_created ?? 0) > 0 ||
+        (data.hosts_updated ?? 0) > 0 ||
+        (data.ports_created ?? 0) > 0 ||
+        (data.ports_updated ?? 0) > 0 ||
+        (data.screenshots_imported ?? 0) > 0 ||
+        (data.metadata_records_imported ?? 0) > 0;
+      if (hasData) onSuccess();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Import failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFileClick = () => fileInputRef.current?.click();
+
+  const handleReset = () => {
+    setSelectedFile(null);
+    setResult(null);
+    setError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   return (
-    <>
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        backgroundColor: "rgba(0,0,0,0.6)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+      }}
+      onClick={onClose}
+    >
       <div
         style={{
-          position: "fixed",
-          inset: 0,
-          backgroundColor: "rgba(0,0,0,0.6)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 1000,
+          backgroundColor: "var(--bg-panel)",
+          borderRadius: 8,
+          border: "1px solid var(--border)",
+          padding: 24,
+          maxWidth: 480,
+          width: "90%",
         }}
-        onClick={onClose}
+        onClick={(e) => e.stopPropagation()}
       >
-        <div
-          style={{
-            backgroundColor: "var(--bg-panel)",
-            borderRadius: 8,
-            border: "1px solid var(--border)",
-            padding: 24,
-            maxWidth: 480,
-            width: "90%",
-          }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <h2 style={{ margin: "0 0 4px", fontSize: "1.25rem" }}>Import hosts</h2>
-          <p style={{ margin: "0 0 20px", fontSize: 14, color: "var(--text-muted)" }}>{subtext}</p>
+        <h2 style={{ margin: "0 0 4px", fontSize: "1.25rem" }}>Import Host/Scan Results</h2>
+        <p style={{ margin: "0 0 20px", fontSize: 14, color: "var(--text-muted)" }}>{subtext}</p>
 
-          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-            <button
-              type="button"
-              className="theme-btn"
-              style={{
-                ...(activeTab === "paste"
-                  ? { backgroundColor: "var(--accent-bg)", borderColor: "var(--accent)", color: "var(--accent)" }
-                  : {}),
-              }}
-              onClick={() => setActiveTab("paste")}
-            >
-              Paste
-            </button>
-            <button
-              type="button"
-              className="theme-btn"
-              style={{
-                ...(activeTab === "file"
-                  ? { backgroundColor: "var(--accent-bg)", borderColor: "var(--accent)", color: "var(--accent)" }
-                  : {}),
-              }}
-              onClick={() => setActiveTab("file")}
-            >
-              File upload
-            </button>
-          </div>
-
-          {activeTab === "paste" ? (
-            <textarea
-              value={pasteInput}
-              onChange={(e) => setPasteInput(e.target.value)}
-              placeholder={PASTE_PLACEHOLDER}
-              className="theme-input"
-              rows={8}
-              style={{ resize: "vertical", marginBottom: 16, fontFamily: "monospace", fontSize: 13 }}
+        {!result ? (
+          <>
+            <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--text-muted)" }}>
+              Supports Nmap XML (-oX), GoWitness ZIP, or plain text (one host per line). Format is auto-detected.
+            </p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xml,.zip,.txt"
+              onChange={handleFileChange}
+              style={{ display: "none" }}
             />
-          ) : (
-            <div style={{ marginBottom: 16 }}>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".txt,.csv"
-                onChange={handleFileChange}
-                style={{ display: "none" }}
-              />
-              <button type="button" className="theme-btn theme-btn-ghost" onClick={handleFileClick} style={{ marginBottom: 8 }}>
-                Choose file (.txt, .csv)
-              </button>
-              {selectedFile && (
-                <p style={{ margin: 0, fontSize: 14, color: "var(--text-muted)" }}>{selectedFile.name}</p>
-              )}
+            <div
+              style={{
+                padding: 16,
+                border: "1px dashed var(--border)",
+                borderRadius: 8,
+                marginBottom: 16,
+                textAlign: "center",
+                cursor: "pointer",
+              }}
+              onClick={handleFileClick}
+            >
+              {selectedFile ? selectedFile.name : "Choose .xml, .zip, or .txt file"}
             </div>
-          )}
-
-          {showPreview && (
+            {error && (
+              <p style={{ margin: "0 0 12px", color: "var(--error)", fontSize: 14 }}>{error}</p>
+            )}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="theme-btn theme-btn-ghost" onClick={onClose}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="theme-btn theme-btn-primary"
+                onClick={handleImport}
+                disabled={!selectedFile || loading}
+              >
+                {loading ? "Importing…" : "Import"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
             <div
               style={{
                 padding: 12,
                 backgroundColor: "var(--bg-elevated)",
                 borderRadius: 6,
-                border: "1px solid var(--border)",
                 marginBottom: 16,
                 fontSize: 14,
               }}
             >
-              <p style={{ margin: "0 0 4px" }}>{mockHosts} hosts detected</p>
-              <p style={{ margin: "0 0 4px" }}>{mockSubnets} subnets detected</p>
-              <p style={{ margin: 0 }}>{mockDuplicates} duplicates skipped</p>
+              {result.format && (
+                <p style={{ margin: "0 0 8px", fontWeight: 600, color: "var(--accent)" }}>
+                  Imported as {result.format}
+                </p>
+              )}
+              <p style={{ margin: "0 0 4px" }}>Hosts created: {result.hosts_created}</p>
+              {(result.hosts_updated ?? 0) > 0 && (
+                <p style={{ margin: "0 0 4px" }}>Hosts updated: {result.hosts_updated}</p>
+              )}
+              {result.format !== "text" && (
+                <>
+                  <p style={{ margin: "0 0 4px" }}>Ports created: {result.ports_created}</p>
+              {(result.ports_updated ?? 0) > 0 && (
+                <p style={{ margin: "0 0 4px" }}>Ports updated: {result.ports_updated}</p>
+              )}
+              {(result.evidence_created ?? 0) > 0 && (
+                <p style={{ margin: "0 0 4px" }}>Evidence created: {result.evidence_created}</p>
+              )}
+              {(result.notes_created ?? 0) > 0 && (
+                <p style={{ margin: "0 0 4px" }}>Notes created: {result.notes_created}</p>
+              )}
+              </>
+              )}
+              {(result.screenshots_imported ?? 0) > 0 && (
+                <p style={{ margin: "0 0 4px" }}>Screenshots: {result.screenshots_imported}</p>
+              )}
+              {(result.metadata_records_imported ?? 0) > 0 && (
+                <p style={{ margin: "0 0 4px" }}>Metadata: {result.metadata_records_imported}</p>
+              )}
+              {(result.skipped ?? 0) > 0 && (
+                <p style={{ margin: "0 0 4px", color: "var(--text-muted)" }}>
+                  Skipped (duplicates): {result.skipped}
+                </p>
+              )}
+              {result.errors.length > 0 && (
+                <p style={{ margin: "8px 0 0", color: "var(--text-muted)", fontSize: 12 }}>
+                  {result.errors.slice(0, 5).join("; ")}
+                </p>
+              )}
             </div>
-          )}
-
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button type="button" className="theme-btn theme-btn-ghost" onClick={onClose}>
-              Cancel
-            </button>
-            <button type="button" className="theme-btn" onClick={handlePreview}>
-              Preview
-            </button>
-            <button type="button" className="theme-btn theme-btn-primary" onClick={handleImport}>
-              Import
-            </button>
-          </div>
-        </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="theme-btn theme-btn-ghost" onClick={handleReset}>
+                Import another
+              </button>
+              <button type="button" className="theme-btn theme-btn-primary" onClick={onClose}>
+                Done
+              </button>
+            </div>
+          </>
+        )}
       </div>
-
-      {showToast && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: 24,
-            left: "50%",
-            transform: "translateX(-50%)",
-            backgroundColor: "var(--bg-panel)",
-            border: "1px solid var(--accent)",
-            borderRadius: 8,
-            padding: "12px 20px",
-            color: "var(--text)",
-            fontSize: 14,
-            zIndex: 1001,
-            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-          }}
-        >
-          Import complete (mock)
-        </div>
-      )}
-    </>
+    </div>
   );
 }

@@ -1,7 +1,3 @@
-import io
-import tempfile
-import zipfile
-from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
@@ -12,9 +8,10 @@ from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.models.models import Lock, Project, User
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead
+from app.schemas.report import ReportRunRequest, ReportRunResponse, ReportConfigSchema, ReportFiltersSchema, ReportBuilderRequest
 from app.services.audit import log_audit
-from app.services.gowitness_parser import parse_gowitness_directory
-from app.services.gowitness_import import run_gowitness_import
+from app.services.import_dispatcher import run_import
+from app.services.reports import run_report, list_report_configs, run_builder, BUILDER_COLUMNS, _builder_columns_json, ReportFilters
 
 router = APIRouter()
 
@@ -96,74 +93,173 @@ def _get_client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
-@router.post("/{project_id}/gowitness-import")
-async def gowitness_import(
+@router.post("/{project_id}/import")
+async def import_scan(
     project_id: UUID,
     request: Request,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Import GoWitness output (ZIP of directory with screenshots and/or JSONL metadata). Mission-scoped."""
-    if not file.filename or not file.filename.lower().endswith(".zip"):
+    """
+    Unified import: auto-detects format and runs the appropriate importer.
+
+    Supports:
+    - Nmap XML (.xml or .zip containing .xml)
+    - GoWitness (.zip with PNG/JPEG and/or JSONL)
+    - Plain text (.txt) - one host per line: IP [hostname]
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+    fn = file.filename.lower()
+    if not (fn.endswith(".xml") or fn.endswith(".zip") or fn.endswith(".txt")):
         raise HTTPException(
             status_code=400,
-            detail="GoWitness import requires a .zip file with PNG/JPEG screenshots and/or JSONL metadata.",
+            detail="Unsupported file type. Use Nmap XML (.xml), GoWitness/ZIP (.zip), or plain text (.txt).",
         )
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
     data = await file.read()
-    try:
-        with zipfile.ZipFile(io.BytesIO(data), "r") as zf:
-            names = zf.namelist()
-            has_image = any(
-                n.lower().endswith(ext) for n in names for ext in (".png", ".jpg", ".jpeg")
-            )
-            has_jsonl = any(n.lower().endswith(".jsonl") for n in names)
-            if not has_image and not has_jsonl:
-                raise HTTPException(
-                    status_code=400,
-                    detail="ZIP must contain PNG/JPEG screenshots and/or .jsonl metadata. Unsupported format.",
-                )
-    except zipfile.BadZipFile:
-        raise HTTPException(status_code=400, detail="Invalid or corrupted ZIP file.")
+    if len(data) == 0:
+        raise HTTPException(status_code=400, detail="Empty file")
 
-    with tempfile.TemporaryDirectory(prefix="gowitness_") as tmpdir:
-        root = Path(tmpdir)
-        with zipfile.ZipFile(io.BytesIO(data), "r") as zf:
-            zf.extractall(root)
-        parse_result = parse_gowitness_directory(root)
-        if not parse_result.records and parse_result.errors:
-            raise HTTPException(
-                status_code=400,
-                detail=parse_result.errors[0] if len(parse_result.errors) == 1 else "; ".join(parse_result.errors[:3]),
-            )
-        if not parse_result.records:
-            return {
-                "hosts_created": 0,
-                "ports_created": 0,
-                "screenshots_imported": 0,
-                "metadata_records_imported": 0,
-                "errors": parse_result.errors,
-            }
-        summary = run_gowitness_import(
+    try:
+        result = run_import(
             db,
             project_id,
-            root,
+            data,
+            file.filename or "upload",
             current_user.id,
             _get_client_ip(request),
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-    return {
-        "hosts_created": summary.hosts_created,
-        "ports_created": summary.ports_created,
-        "screenshots_imported": summary.screenshots_imported,
-        "metadata_records_imported": summary.metadata_records_imported,
-        "errors": summary.errors,
-        "skipped": summary.skipped,
-    }
+    return result
+
+
+@router.get("/{project_id}/reports/builder/columns")
+def get_builder_columns(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get available columns per data source for report builder."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return _builder_columns_json()
+
+
+@router.post("/{project_id}/reports/builder", response_model=ReportRunResponse)
+def run_report_builder(
+    project_id: UUID,
+    body: ReportBuilderRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Run report builder: select columns + filter expression."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        rows = run_builder(db, project_id, body.data_source, body.columns, body.filter_expression)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    log_audit(
+        db,
+        project_id=project_id,
+        user_id=current_user.id,
+        action_type="report_builder_generated",
+        record_type="project",
+        record_id=project_id,
+        after_json={
+            "data_source": body.data_source,
+            "columns": body.columns,
+            "filter_expression": body.filter_expression,
+            "row_count": len(rows),
+        },
+        ip_address=_get_client_ip(request),
+    )
+    db.commit()
+    return ReportRunResponse(
+        report_type="builder",
+        report_name="Report builder",
+        rows=rows,
+        count=len(rows),
+    )
+
+
+@router.get("/{project_id}/reports/configs", response_model=list[ReportConfigSchema])
+def list_reports(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List available custom report types."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return [ReportConfigSchema(id=c.id, name=c.name) for c in list_report_configs()]
+
+
+@router.post("/{project_id}/reports/run", response_model=ReportRunResponse)
+def run_custom_report(
+    project_id: UUID,
+    body: ReportRunRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Run a custom report and return rows."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    f = body.filters
+    filters = ReportFilters(
+        exclude_unresolved=f.exclude_unresolved if f else True,
+        status=f.status if f else None,
+        subnet_id=f.subnet_id if f else None,
+        port_number=f.port_number if f else None,
+        port_protocol=f.port_protocol if f else None,
+        severity=f.severity if f else None,
+    )
+    try:
+        rows, config = run_report(db, project_id, body.report_type, filters)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    log_audit(
+        db,
+        project_id=project_id,
+        user_id=current_user.id,
+        action_type="custom_report_generated",
+        record_type="project",
+        record_id=project_id,
+        after_json={
+            "report_type": body.report_type,
+            "report_name": config.name,
+            "filters": {
+                "exclude_unresolved": filters.exclude_unresolved,
+                "status": filters.status,
+                "subnet_id": str(filters.subnet_id) if filters.subnet_id else None,
+                "port_number": filters.port_number,
+                "port_protocol": filters.port_protocol,
+                "severity": filters.severity,
+            },
+            "row_count": len(rows),
+        },
+        ip_address=_get_client_ip(request),
+    )
+    db.commit()
+    return ReportRunResponse(
+        report_type=config.id,
+        report_name=config.name,
+        rows=rows,
+        count=len(rows),
+    )
 
 
 @router.delete("/{project_id}", status_code=204)

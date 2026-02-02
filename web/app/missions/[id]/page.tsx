@@ -1,15 +1,15 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { apiUrl } from "../../lib/api";
 import { useLockState } from "../../hooks/use-lock-state";
+import { parseFilter, matchEvidence, matchPort, matchHost, matchVuln } from "../../lib/tree-filter";
 import { AddHostModal } from "../../components/add-host-modal";
 import { AddSubnetModal } from "../../components/add-subnet-modal";
 import { ContextMenu } from "../../components/context-menu";
 import { ImportHostsModal, type ImportHostsContext } from "../../components/import-hosts-modal";
-import { ImportGoWitnessModal } from "../../components/import-gowitness-modal";
 import { NoteEditorPanel, type NoteAttachment } from "../../components/note-editor-panel";
 import { NotePrintView } from "../../components/note-print-view";
 import { PortModal } from "../../components/port-modal";
@@ -21,6 +21,7 @@ import { VulnAttachmentsSection } from "../../components/vuln-attachments-sectio
 import { RenameHostModal } from "../../components/rename-host-modal";
 import { RenameSubnetModal } from "../../components/rename-subnet-modal";
 import { StubModal } from "../../components/stub-modal";
+import { CustomReportsPanel } from "../../components/custom-reports-panel";
 import { Toast } from "../../components/toast";
 import { renderMarkdown } from "../../lib/markdown";
 import {
@@ -29,6 +30,7 @@ import {
   getHighestSeverity,
   getSeverityColor,
   hasManualSeverityOverride,
+  type SeverityLevel,
   type VulnLike,
 } from "../../lib/severity";
 
@@ -156,6 +158,7 @@ type SelectedNode =
   | { type: "note"; id: string; target: NoteTarget; targetId: string }
   | { type: "vulnerabilities" }
   | { type: "evidence" }
+  | { type: "custom-reports" }
   | { type: "jobs" }
   | null;
 
@@ -165,11 +168,27 @@ function isUnresolvedHost(h: { ip: string }): boolean {
   return String(h.ip || "").toLowerCase() === "unresolved";
 }
 
+function compareIp(a: string, b: string): number {
+  const aNorm = (a || "").toLowerCase();
+  const bNorm = (b || "").toLowerCase();
+  if (aNorm === "unresolved") return 1;
+  if (bNorm === "unresolved") return -1;
+  const aParts = a.split(".").map((n) => parseInt(n, 10));
+  const bParts = b.split(".").map((n) => parseInt(n, 10));
+  if (aParts.length === 4 && bParts.length === 4 && !aParts.some(isNaN) && !bParts.some(isNaN)) {
+    for (let i = 0; i < 4; i++) {
+      const diff = aParts[i]! - bParts[i]!;
+      if (diff !== 0) return diff;
+    }
+    return 0;
+  }
+  return a.localeCompare(b, undefined, { numeric: true });
+}
+
 function hostLabel(h: { ip: string; dns_name: string | null }): string {
   if (isUnresolvedHost(h) && h.dns_name) return `unresolved (${h.dns_name})`;
   if (isUnresolvedHost(h)) return "unresolved";
-  if (h.dns_name && !isUnresolvedHost(h)) return `${h.dns_name} (${h.ip})`;
-  return `${h.ip}${h.dns_name ? ` (${h.dns_name})` : ""}`;
+  return h.dns_name ? `${h.ip} (${h.dns_name})` : h.ip;
 }
 
 function formatDate(s: string | null): string {
@@ -199,8 +218,8 @@ function Spinner() {
   );
 }
 
-function SeverityBadge({ severity, compact }: { severity: string | null | undefined; compact?: boolean }) {
-  const color = getSeverityColor(severity);
+function SeverityBadge({ severity, compact }: { severity: SeverityLevel | string | null | undefined; compact?: boolean }) {
+  const color = getSeverityColor(severity as SeverityLevel | null | undefined);
   if (!severity) return null;
   return (
     <span
@@ -218,19 +237,252 @@ function SeverityBadge({ severity, compact }: { severity: string | null | undefi
   );
 }
 
-function ReachabilityDot({ status }: { status: string | null }) {
-  const reachable = status === "up";
+type ReachabilityStatus = "up" | "down" | "unknown";
+
+function ReachabilityDot({ status }: { status: ReachabilityStatus | string | null }) {
+  const norm = (status ?? "unknown").toString().toLowerCase();
+  const effective: ReachabilityStatus = norm === "up" || norm === "online" ? "up" : norm === "down" || norm === "offline" ? "down" : "unknown";
+  const color = effective === "up" ? "#48bb78" : effective === "down" ? "#ed8936" : "var(--text-dim)";
+  const title = effective === "up" ? "Online" : effective === "down" ? "Offline" : "Unknown";
   return (
     <span
       style={{
         width: 8,
         height: 8,
         borderRadius: "50%",
-        backgroundColor: reachable ? "#48bb78" : "var(--text-dim)",
+        backgroundColor: color,
         flexShrink: 0,
       }}
-      title={reachable ? "Reachable" : "Unreachable"}
+      title={title}
     />
+  );
+}
+
+function getEffectiveHostStatus(h: { status: string | null }): ReachabilityStatus {
+  const s = (h.status ?? "").toLowerCase();
+  if (s === "down" || s === "offline") return "down";
+  if (s === "up" || s === "online") return "up";
+  return "unknown";
+}
+
+const FILTER_ATTRS = [
+  { attr: "ip", category: "Host", desc: "Host IP address" },
+  { attr: "hostname", category: "Host", desc: "DNS name / hostname" },
+  { attr: "unresolved", category: "Host", desc: "Host has unresolved IP" },
+  { attr: "online", category: "Host", desc: "Host is online" },
+  { attr: "status", category: "Host", desc: "Host status" },
+  { attr: "port", category: "Port", desc: "Port number" },
+  { attr: "protocol", category: "Port", desc: "Protocol (tcp, udp)" },
+  { attr: "service", category: "Port", desc: "Service name" },
+  { attr: "state", category: "Port", desc: "Port state" },
+  { attr: "page_title", category: "Report", desc: "Page title from reports" },
+  { attr: "response_code", category: "Report", desc: "HTTP response code" },
+  { attr: "server", category: "Report", desc: "Server header" },
+  { attr: "technology", category: "Report", desc: "Technology (from caption)" },
+  { attr: "source", category: "Report", desc: "Report source (e.g. gowitness)" },
+  { attr: "screenshot", category: "Report", desc: "Has screenshot (exists)" },
+  { attr: "severity", category: "Vulnerability", desc: "Vuln severity (Critical, High, etc.)" },
+  { attr: "vuln.title", category: "Vulnerability", desc: "Vulnerability title" },
+  { attr: "cvss", category: "Vulnerability", desc: "CVSS score" },
+] as const;
+
+const FILTER_OPS: { op: string; label: string; needsValue: boolean }[] = [
+  { op: "==", label: "equals", needsValue: true },
+  { op: "!=", label: "not equals", needsValue: true },
+  { op: "contains", label: "contains", needsValue: true },
+  { op: "exists", label: "exists", needsValue: false },
+  { op: ">=", label: "≥", needsValue: true },
+  { op: "<=", label: "≤", needsValue: true },
+  { op: ">", label: ">", needsValue: true },
+  { op: "<", label: "<", needsValue: true },
+];
+
+function FilterHelpPanel({
+  onClose,
+  currentFilter,
+  onApplyFilter,
+  parseFilter,
+}: {
+  onClose: () => void;
+  currentFilter: string;
+  onApplyFilter: (v: string) => void;
+  parseFilter: (input: string) => { attr: string; op: string; value?: string | number | boolean } | null;
+}) {
+  const [builderAttr, setBuilderAttr] = useState("page_title");
+  const [builderOp, setBuilderOp] = useState("contains");
+  const [builderValue, setBuilderValue] = useState("");
+  const parsed = parseFilter(currentFilter);
+
+  const buildExpression = () => {
+    const attr = builderAttr;
+    const op = builderOp;
+    const needsVal = FILTER_OPS.find((o) => o.op === op)?.needsValue ?? true;
+    if (needsVal && op !== "exists") {
+      const val = builderValue.trim();
+      if (!val) return "";
+      const isNum = /^\d+(\.\d+)?$/.test(val);
+      const isBool = val === "true" || val === "false";
+      const isSeverity = ["Critical", "High", "Medium", "Low", "Info"].includes(val);
+      const noQuotes = isNum || isBool || isSeverity;
+      const quote = !noQuotes ? '"' : "";
+      return `${attr} ${op} ${quote}${val}${quote}`.trim();
+    }
+    return `${attr} exists`;
+  };
+
+  const handleApply = () => {
+    onApplyFilter(buildExpression());
+  };
+
+  return (
+    <aside
+      style={{
+        width: 340,
+        minWidth: 340,
+        flexShrink: 0,
+        borderLeft: "1px solid var(--border)",
+        backgroundColor: "var(--bg-panel)",
+        overflowY: "auto",
+        padding: 16,
+        display: "flex",
+        flexDirection: "column",
+        gap: 16,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Filter help</h3>
+        <button
+          type="button"
+          onClick={onClose}
+          style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: "var(--text-muted)", padding: "0 4px", lineHeight: 1 }}
+          aria-label="Close"
+        >
+          ×
+        </button>
+      </div>
+
+      <section>
+        <h4 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600, color: "var(--text-muted)" }}>Syntax</h4>
+        <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: "var(--text)" }}>
+          Use <code style={{ background: "var(--bg)", padding: "1px 4px", borderRadius: 4 }}>attr op value</code>. Values with spaces use quotes. Matching is case-insensitive.
+        </p>
+        <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 12, lineHeight: 1.6, color: "var(--text)" }}>
+          <li><code style={{ background: "var(--bg)", padding: "1px 4px", borderRadius: 4 }}>==</code> equals</li>
+          <li><code style={{ background: "var(--bg)", padding: "1px 4px", borderRadius: 4 }}>!=</code> not equals</li>
+          <li><code style={{ background: "var(--bg)", padding: "1px 4px", borderRadius: 4 }}>contains</code> substring match</li>
+          <li><code style={{ background: "var(--bg)", padding: "1px 4px", borderRadius: 4 }}>exists</code> attribute present (no value)</li>
+          <li><code style={{ background: "var(--bg)", padding: "1px 4px", borderRadius: 4 }}>&gt;=</code> <code style={{ background: "var(--bg)", padding: "1px 4px", borderRadius: 4 }}>&lt;=</code> <code style={{ background: "var(--bg)", padding: "1px 4px", borderRadius: 4 }}>&gt;</code> <code style={{ background: "var(--bg)", padding: "1px 4px", borderRadius: 4 }}>&lt;</code> for numbers and severity</li>
+        </ul>
+      </section>
+
+      <section>
+        <h4 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600, color: "var(--text-muted)" }}>Examples</h4>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
+          {[
+            "page_title contains login",
+            "response_code == 200",
+            "service == https",
+            "severity >= High",
+            "screenshot exists",
+            "port >= 443",
+          ].map((ex) => (
+            <button
+              key={ex}
+              type="button"
+              className="theme-btn theme-btn-ghost"
+              style={{ textAlign: "left", fontSize: 11, fontFamily: "monospace", padding: "6px 8px" }}
+              onClick={() => onApplyFilter(ex)}
+            >
+              {ex}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h4 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600, color: "var(--text-muted)" }}>Filter builder</h4>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Attribute</label>
+            <select
+              className="theme-input"
+              value={builderAttr}
+              onChange={(e) => setBuilderAttr(e.target.value)}
+              style={{ width: "100%", fontSize: 12, padding: "6px 8px" }}
+            >
+              {FILTER_ATTRS.map((a) => (
+                <option key={a.attr} value={a.attr}>{a.attr} ({a.category})</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Operator</label>
+            <select
+              className="theme-input"
+              value={builderOp}
+              onChange={(e) => {
+                setBuilderOp(e.target.value);
+                if (e.target.value === "exists") setBuilderValue("");
+              }}
+              style={{ width: "100%", fontSize: 12, padding: "6px 8px" }}
+            >
+              {FILTER_OPS.map((o) => (
+                <option key={o.op} value={o.op}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+          {FILTER_OPS.find((o) => o.op === builderOp)?.needsValue !== false && (
+            <div>
+              <label style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Value</label>
+              <input
+                type="text"
+                className="theme-input"
+                value={builderValue}
+                onChange={(e) => setBuilderValue(e.target.value)}
+                placeholder={builderAttr === "severity" ? "Critical, High, Medium, Low, Info" : "Enter value"}
+                style={{ width: "100%", fontSize: 12, padding: "6px 8px" }}
+              />
+            </div>
+          )}
+          <button
+            type="button"
+            className="theme-btn"
+            onClick={handleApply}
+            disabled={!buildExpression()}
+            style={{ marginTop: 4 }}
+          >
+            Apply filter
+          </button>
+          {buildExpression() && (
+            <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "monospace", wordBreak: "break-all" }}>
+              → {buildExpression()}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section>
+        <h4 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600, color: "var(--text-muted)" }}>Attributes</h4>
+        <div style={{ fontSize: 11, lineHeight: 1.5, color: "var(--text)" }}>
+          {["Host", "Port", "Report", "Vulnerability"].map((cat) => (
+            <div key={cat} style={{ marginBottom: 8 }}>
+              <span style={{ fontWeight: 600, color: "var(--text-muted)" }}>{cat}:</span>{" "}
+              {FILTER_ATTRS.filter((a) => a.category === cat).map((a) => a.attr).join(", ")}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {currentFilter && (
+        <section>
+          <h4 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600, color: "var(--text-muted)" }}>Current filter</h4>
+          <div style={{ fontSize: 12, fontFamily: "monospace", wordBreak: "break-all", color: parsed ? "var(--accent)" : "var(--text-dim)" }}>
+            {currentFilter}
+            {parsed && ` ✓`}
+          </div>
+        </section>
+      )}
+    </aside>
   );
 }
 
@@ -273,7 +525,6 @@ export default function MissionDetailPage() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: { label: string; onClick: () => void }[] } | null>(null);
   const [importHostsModal, setImportHostsModal] = useState<ImportHostsContext | null>(null);
-  const [importGoWitnessModal, setImportGoWitnessModal] = useState(false);
   const [addSubnetModal, setAddSubnetModal] = useState(false);
   const [addHostModal, setAddHostModal] = useState<{ subnetId: string | null } | null>(null);
   const [renameSubnetModal, setRenameSubnetModal] = useState<Subnet | null>(null);
@@ -301,6 +552,62 @@ export default function MissionDetailPage() {
   const [deleteVulnModal, setDeleteVulnModal] = useState<{ instance: VulnInstance } | null>(null);
   const [stubModal, setStubModal] = useState<{ title: string; message?: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  const TREE_WIDTH_KEY = "redopsync-tree-width";
+  const defaultTreeWidth = 280;
+  const [treeFilterInput, setTreeFilterInput] = useState("");
+  const [filterHelpOpen, setFilterHelpOpen] = useState(false);
+  const [treeWidth, setTreeWidthState] = useState(defaultTreeWidth);
+  const [isResizing, setIsResizing] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(TREE_WIDTH_KEY);
+      if (stored != null) {
+        const w = parseInt(stored, 10);
+        if (!Number.isNaN(w) && w >= 220) setTreeWidthState(w);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const setTreeWidth = useCallback((w: number) => {
+    const minW = 220;
+    const maxW = typeof window !== "undefined" ? Math.floor(window.innerWidth * 0.5) : 600;
+    const clamped = Math.min(maxW, Math.max(minW, w));
+    setTreeWidthState(clamped);
+    try {
+      localStorage.setItem(TREE_WIDTH_KEY, String(clamped));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isResizing) return;
+    const onMove = (e: MouseEvent) => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const maxW = Math.floor(rect.width * 0.5);
+      const clamped = Math.min(maxW, Math.max(220, x));
+      setTreeWidthState(clamped);
+      try {
+        localStorage.setItem(TREE_WIDTH_KEY, String(clamped));
+      } catch {
+        /* ignore */
+      }
+    };
+    const onUp = () => setIsResizing(false);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [isResizing]);
 
   const { locks, acquireLock, releaseLock, renewLock, refreshLocks } = useLockState(missionId);
 
@@ -551,18 +858,177 @@ export default function MissionDetailPage() {
     });
   };
 
-  const hostsBySubnet = hosts.reduce<Record<string, Host[]>>((acc, h) => {
-    if (isUnresolvedHost(h)) {
-      const k = "_unresolved";
-      if (!acc[k]) acc[k] = [];
-      acc[k].push(h);
-    } else {
-      const k = h.subnet_id ?? "_unassigned";
-      if (!acc[k]) acc[k] = [];
-      acc[k].push(h);
+  const hostsBySubnet = useMemo(() => {
+    const acc: Record<string, Host[]> = {};
+    for (const h of hosts) {
+      if (isUnresolvedHost(h)) {
+        const k = "_unresolved";
+        if (!acc[k]) acc[k] = [];
+        acc[k].push(h);
+      } else {
+        const k = h.subnet_id ?? "_unassigned";
+        if (!acc[k]) acc[k] = [];
+        acc[k].push(h);
+      }
+    }
+    for (const k of Object.keys(acc)) {
+      acc[k]!.sort((a, b) => compareIp(a.ip, b.ip));
     }
     return acc;
-  }, {});
+  }, [hosts]);
+
+  const getDescendantKeys = useCallback((key: string): Set<string> => {
+    const out = new Set<string>([key]);
+    if (key === "scope") {
+      subnets.forEach((s) => out.add(`subnet:${s.id}`));
+      out.add("unresolved");
+      hosts.forEach((h) => {
+        out.add(`host:${h.id}`);
+        out.add(`host-ports:${h.id}`);
+        out.add(`host-vulns:${h.id}`);
+        (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+      });
+      return out;
+    }
+    if (key === "unresolved") {
+      (hostsBySubnet["_unresolved"] ?? []).forEach((h) => {
+        out.add(`host:${h.id}`);
+        out.add(`host-ports:${h.id}`);
+        out.add(`host-vulns:${h.id}`);
+        (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+      });
+      return out;
+    }
+    if (key.startsWith("subnet:")) {
+      const sid = key.slice(7);
+      (hostsBySubnet[sid] ?? []).forEach((h) => {
+        out.add(`host:${h.id}`);
+        out.add(`host-ports:${h.id}`);
+        out.add(`host-vulns:${h.id}`);
+        (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+      });
+      return out;
+    }
+    if (key.startsWith("host:")) {
+      const hid = key.slice(5);
+      out.add(`host-ports:${hid}`);
+      out.add(`host-vulns:${hid}`);
+      (portsByHost[hid] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+      return out;
+    }
+    if (key.startsWith("host-ports:")) {
+      const hid = key.slice(11);
+      (portsByHost[hid] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+      return out;
+    }
+    if (key === "host-vulns:" || key.startsWith("host-vulns:") || key.startsWith("port-evidence:") || key === "vulnerabilities") return out;
+    return out;
+  }, [subnets, hosts, hostsBySubnet, portsByHost]);
+
+  const toggleExpandCollapse = useCallback((key: string) => {
+    const keys = getDescendantKeys(key);
+    setExpanded((prev) => {
+      const allExpanded = [...keys].every((k) => prev.has(k));
+      if (allExpanded) {
+        const next = new Set(prev);
+        keys.forEach((k) => next.delete(k));
+        return next;
+      }
+      return new Set([...prev, ...keys]);
+    });
+  }, [getDescendantKeys]);
+
+  const parsedFilter = useMemo(() => parseFilter(treeFilterInput), [treeFilterInput]);
+  const filterActive = !!parsedFilter && treeFilterInput.trim().length > 0;
+
+  const { matchingHostIds, matchingPortIds, matchingSubnetIds, matchingVulnIds, hasMatchingUnresolved, matchingUnassignedHostIds, visibleHostCount } = useMemo(() => {
+    const hostIds = new Set<string>();
+    const portIds = new Set<string>();
+    const subnetIds = new Set<string>();
+    const vulnIds = new Set<string>();
+    if (!parsedFilter) {
+      const allHosts = new Set(hosts.map((h) => h.id));
+      const allPorts = new Set(Object.values(portsByHost).flat().map((p) => p.id));
+      const allVulns = new Set(Object.values(vulnsByHost).flat().map((v) => v.id));
+      subnets.forEach((s) => subnetIds.add(s.id));
+      return {
+        matchingHostIds: allHosts,
+        matchingPortIds: allPorts,
+        matchingSubnetIds: subnetIds,
+        matchingVulnIds: allVulns,
+        hasMatchingUnresolved: (hostsBySubnet["_unresolved"] ?? []).length > 0,
+        matchingUnassignedHostIds: new Set((hostsBySubnet["_unassigned"] ?? []).map((h) => h.id)),
+        visibleHostCount: hosts.length,
+      };
+    }
+    hosts.forEach((h) => {
+      if (matchHost(parsedFilter, h)) hostIds.add(h.id);
+    });
+    Object.values(vulnsByHost).flat().forEach((v) => {
+      if (matchVuln(parsedFilter, v)) {
+        vulnIds.add(v.id);
+        hostIds.add(v.host_id);
+      }
+    });
+    hosts.forEach((h) => {
+      (portsByHost[h.id] ?? []).forEach((p) => {
+        if (matchPort(parsedFilter, p)) {
+          portIds.add(p.id);
+          hostIds.add(h.id);
+        }
+        (evidenceByPort[p.id] ?? []).forEach((ev) => {
+          if (matchEvidence(parsedFilter, ev)) {
+            portIds.add(p.id);
+            hostIds.add(h.id);
+          }
+        });
+      });
+    });
+    subnets.forEach((s) => {
+      if ((hostsBySubnet[s.id] ?? []).some((h) => hostIds.has(h.id))) subnetIds.add(s.id);
+    });
+    const unresolvedHosts = hostsBySubnet["_unresolved"] ?? [];
+    const unassignedHosts = hostsBySubnet["_unassigned"] ?? [];
+    const visibleCount = [...new Set([...hostIds].filter((id) => hosts.some((h) => h.id === id)))].length;
+    return {
+      matchingHostIds: hostIds,
+      matchingPortIds: portIds,
+      matchingSubnetIds: subnetIds,
+      matchingVulnIds: vulnIds,
+      hasMatchingUnresolved: unresolvedHosts.some((h) => hostIds.has(h.id)),
+      matchingUnassignedHostIds: new Set(unassignedHosts.filter((h) => hostIds.has(h.id)).map((h) => h.id)),
+      visibleHostCount: visibleCount,
+    };
+  }, [parsedFilter, hosts, subnets, hostsBySubnet, portsByHost, evidenceByPort, vulnsByHost]);
+
+  const filterNeedsEvidence = parsedFilter && ["page_title", "response_code", "server", "technology", "source", "screenshot"].includes(parsedFilter.attr);
+  useEffect(() => {
+    if (!filterActive || !filterNeedsEvidence) return;
+    const allPortIds = Object.values(portsByHost).flat().map((p) => p.id);
+    allPortIds.forEach((portId) => loadEvidenceForPort(portId));
+  }, [filterActive, filterNeedsEvidence, portsByHost, loadEvidenceForPort]);
+
+  useEffect(() => {
+    if (filterActive && parsedFilter) {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        next.add("scope");
+        subnets.forEach((s) => {
+          if (matchingSubnetIds.has(s.id)) next.add(`subnet:${s.id}`);
+        });
+        if (hasMatchingUnresolved) next.add("unresolved");
+        hosts.forEach((h) => {
+          if (matchingHostIds.has(h.id)) {
+            next.add(`host:${h.id}`);
+            const ports = portsByHost[h.id] ?? [];
+            const portMatch = ports.some((p) => matchingPortIds.has(p.id));
+            if (portMatch) next.add(`host-ports:${h.id}`);
+          }
+        });
+        return next;
+      });
+    }
+  }, [filterActive, parsedFilter, matchingSubnetIds, matchingHostIds, matchingPortIds, hasMatchingUnresolved, subnets, hosts, portsByHost]);
 
   const unresolvedCount = (hostsBySubnet["_unresolved"] ?? []).length;
   useEffect(() => {
@@ -889,7 +1355,7 @@ export default function MissionDetailPage() {
       if (selectedNode?.type === "port-evidence" && selectedNode.id === evId) {
         setSelectedNode({ type: "port", id: portId });
       }
-      setToast("Evidence deleted");
+      setToast("Report deleted");
     } catch (err) {
       setToast(String(err));
     }
@@ -1191,8 +1657,9 @@ export default function MissionDetailPage() {
   if (!mission) return null;
 
   const treeStyle = {
-    width: 280,
-    minWidth: 280,
+    width: treeWidth,
+    minWidth: 220,
+    flexShrink: 0,
     borderRight: "1px solid var(--border)",
     overflowY: "auto" as const,
     padding: "8px 0",
@@ -1211,8 +1678,10 @@ export default function MissionDetailPage() {
     const hExp = expanded.has(hKey);
     const portsExp = expanded.has(portsKey);
     const vulnsExp = expanded.has(vulnsKey);
-    const ports = portsByHost[h.id] ?? [];
-    const vulns = vulnsByHost[h.id] ?? [];
+    const allPorts = portsByHost[h.id] ?? [];
+    const ports = filterActive ? allPorts.filter((p) => matchingPortIds.has(p.id)) : allPorts;
+    const allVulns = vulnsByHost[h.id] ?? [];
+    const vulns = filterActive ? allVulns.filter((v) => matchingVulnIds.has(v.id)) : allVulns;
     const portsLoad = portsLoading.has(h.id);
     const vulnsLoad = vulnsLoading.has(h.id);
     const notesLoad = notesLoading.has(h.id);
@@ -1254,6 +1723,7 @@ export default function MissionDetailPage() {
               y: ev.clientY,
               items: [
                 ...lockItems,
+                { label: "Expand/Collapse", onClick: () => toggleExpandCollapse(hKey) },
                 { label: "Add Port", onClick: () => setPortModal({ mode: "add", host: h }) },
                 { label: "Add Vulnerability", onClick: () => setVulnModal({ mode: "add", host: h }) },
                 { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "host", host: h }) },
@@ -1264,7 +1734,7 @@ export default function MissionDetailPage() {
           }}
         >
           <span style={{ width: 14, display: "inline-block", textAlign: "center" }}>{hExp ? "▼" : "▶"}</span>
-          <ReachabilityDot status={h.status} />
+          <ReachabilityDot status={getEffectiveHostStatus(h)} />
           <span style={{ fontWeight: 500 }}>{hostLabel(h)}{countStr}</span>
           {!h.subnet_id && !isUnresolvedHost(h) && <span style={{ color: "var(--text-dim)", fontSize: 11 }}> (unassigned)</span>}
         </div>
@@ -1316,7 +1786,10 @@ export default function MissionDetailPage() {
                 setContextMenu({
                   x: ev.clientX,
                   y: ev.clientY,
-                  items: [{ label: "Add Port", onClick: () => setPortModal({ mode: "add", host: h }) }],
+                  items: [
+                    { label: "Expand/Collapse", onClick: () => toggleExpandCollapse(portsKey) },
+                    { label: "Add Port", onClick: () => setPortModal({ mode: "add", host: h }) },
+                  ],
                 });
               }}
             >
@@ -1334,7 +1807,8 @@ export default function MissionDetailPage() {
                   ports.map((p) => {
                     const portEvKey = `port-evidence:${p.id}`;
                     const portEvExp = expanded.has(portEvKey);
-                    const evList = evidenceByPort[p.id] ?? [];
+                    const rawEvList = evidenceByPort[p.id] ?? [];
+                    const evList = filterActive && parsedFilter ? rawEvList.filter((ev) => matchEvidence(parsedFilter, ev)) : rawEvList;
                     const evLoad = evidenceLoading.has(p.id);
                     const evLoaded = evidenceLoaded.has(p.id);
                     const isSel = selectedNode?.type === "port" && selectedNode.id === p.id;
@@ -1391,8 +1865,8 @@ export default function MissionDetailPage() {
                                         y: evt.clientY,
                                         items: [
                                           { label: "Edit", onClick: () => setNoteModal({ mode: "edit", target: "port", port: p, host: h, note: n }) },
-                                          { label: "Delete", onClick: () => setDeleteNoteModal({ note: n, target: "port", port }) },
-                                          { label: "Print Note", onClick: () => setNotePrintView({ note: n, target: "port", host, port }) },
+                                          { label: "Delete", onClick: () => setDeleteNoteModal({ note: n, target: "port", port: p }) },
+                                          { label: "Print Note", onClick: () => setNotePrintView({ note: n, target: "port", host: h, port: p }) },
                                         ],
                                       });
                                     }}
@@ -1406,7 +1880,7 @@ export default function MissionDetailPage() {
                             {evLoad ? (
                               <div className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 3), color: "var(--text-muted)" }}>Loading…</div>
                             ) : evList.length === 0 ? (
-                              <div className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 3), color: "var(--text-dim)", fontStyle: "italic" }}>No evidence</div>
+                              <div className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 3), color: "var(--text-dim)", fontStyle: "italic" }}>No reports</div>
                             ) : (
                               evList.map((ev) => {
                                 const evSel = selectedNode?.type === "port-evidence" && selectedNode.id === ev.id;
@@ -1495,7 +1969,10 @@ export default function MissionDetailPage() {
                 setContextMenu({
                   x: ev.clientX,
                   y: ev.clientY,
-                  items: [{ label: "Add Vulnerability", onClick: () => setVulnModal({ mode: "add", host: h }) }],
+                  items: [
+                    { label: "Expand/Collapse", onClick: () => toggleExpandCollapse(vulnsKey) },
+                    { label: "Add Vulnerability", onClick: () => setVulnModal({ mode: "add", host: h }) },
+                  ],
                 });
               }}
             >
@@ -1562,7 +2039,7 @@ export default function MissionDetailPage() {
             : noteModal.target === "port" && noteModal.port && noteModal.host
               ? `Port: ${noteModal.port.number}/${noteModal.port.protocol} on ${hostLabel(noteModal.host)}`
               : noteModal.target === "evidence" && noteModal.evidence
-                ? `Evidence: ${noteModal.evidence.caption || noteModal.evidence.filename}`
+                ? `Report: ${noteModal.evidence.caption || noteModal.evidence.filename}`
                 : noteModal.host
                   ? `Host: ${hostLabel(noteModal.host)}`
                   : "";
@@ -1670,7 +2147,7 @@ export default function MissionDetailPage() {
           ) : null}
           {(def.evidence_md ?? "").trim() ? (
             <>
-              <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Evidence / notes</h3>
+              <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Reports / notes</h3>
               <div className="note-markdown-content" style={{ lineHeight: 1.6, marginBottom: 24 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(def.evidence_md ?? "") || "" }} />
             </>
           ) : null}
@@ -1708,7 +2185,13 @@ export default function MissionDetailPage() {
     if (selectedNode.type === "unresolved")
       return <div style={{ padding: 24, color: "var(--text-muted)" }}>Hosts with DNS but unresolved IP. Expand to see hosts.</div>;
     if (selectedNode.type === "evidence")
-      return <div style={{ padding: 24, color: "var(--text-muted)" }}>Evidence (coming soon)</div>;
+      return (
+        <div style={{ padding: 24, color: "var(--text-muted)" }}>
+          <p>Select &quot;Custom Reports&quot; from the tree to build and export query-based reports.</p>
+        </div>
+      );
+    if (selectedNode.type === "custom-reports")
+      return <CustomReportsPanel projectId={missionId} subnets={subnets} onToast={setToast} />;
     if (selectedNode.type === "jobs")
       return <div style={{ padding: 24, color: "var(--text-muted)" }}>Jobs (coming soon)</div>;
 
@@ -1738,7 +2221,7 @@ export default function MissionDetailPage() {
                     }}
                     onClick={() => setSelectedNode({ type: "host", id: h.id })}
                   >
-                    <ReachabilityDot status={h.status} />
+                    <ReachabilityDot status={getEffectiveHostStatus(h)} />
                     <span style={{ marginLeft: 8, fontWeight: 600 }}>{hostLabel(h)}</span>
                     {lock && <span style={{ fontSize: 12, color: "var(--accent)", marginLeft: 8 }}>Locked by {lock.locked_by_username ?? "?"}</span>}
                   </div>
@@ -1759,7 +2242,7 @@ export default function MissionDetailPage() {
       return (
         <div style={{ padding: 24 }}>
           <div style={{ marginBottom: 8 }}>
-            <ReachabilityDot status={host.status} />
+            <ReachabilityDot status={getEffectiveHostStatus(host)} />
             <span style={{ marginLeft: 8, fontSize: "1.25rem", fontWeight: 600 }}>{host.ip}</span>
           </div>
           {host.dns_name ? (
@@ -1853,7 +2336,7 @@ export default function MissionDetailPage() {
               : selectedNode.target === "evidence"
                 ? (() => {
                     const ev = Object.values(evidenceByPort).flat().find((e) => e.id === selectedNode.targetId);
-                    return ev ? `Evidence: ${ev.caption || ev.filename}` : "Evidence";
+                    return ev ? `Report: ${ev.caption || ev.filename}` : "Report";
                   })()
                 : (() => {
                     const h = hosts.find((x) => x.id === selectedNode.targetId);
@@ -1943,7 +2426,7 @@ export default function MissionDetailPage() {
           ) : null}
           {((vuln.definition_evidence_md ?? vuln.notes_md) ?? "").trim() ? (
             <>
-              <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Evidence / notes</h3>
+              <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Reports / notes</h3>
               <div className="note-markdown-content" style={{ lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: renderMarkdown((vuln.definition_evidence_md ?? vuln.notes_md) ?? "") || "" }} />
             </>
           ) : null}
@@ -2004,7 +2487,7 @@ export default function MissionDetailPage() {
           )}
           {(port.evidence_md ?? "").trim() ? (
             <>
-              <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Evidence / Notes</h3>
+              <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Reports / Notes</h3>
               <div
                 className="note-markdown-content"
                 style={{ lineHeight: 1.6, marginBottom: 24 }}
@@ -2024,7 +2507,7 @@ export default function MissionDetailPage() {
             if (!hasEvidence) return null;
             return (
               <div style={{ marginBottom: 24 }}>
-                <h3 style={{ fontSize: "1rem", marginBottom: 12 }}>Evidence</h3>
+                <h3 style={{ fontSize: "1rem", marginBottom: 12 }}>Reports</h3>
                 <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                   {metadataItems.map((ev) => {
                     if (!notesByEvidenceLoaded.has(ev.id) && !notesByEvidenceLoading.has(ev.id)) loadNotesForEvidence(ev.id);
@@ -2132,8 +2615,47 @@ export default function MissionDetailPage() {
         <span>{daysRemaining(mission.end_date)} left</span>
         <Link href="/missions" className="theme-link" style={{ marginLeft: "auto" }}>Switch mission</Link>
       </div>
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+      <div ref={containerRef} style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         <aside style={treeStyle}>
+          <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)", marginBottom: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, backgroundColor: "var(--bg-panel)", borderRadius: 6, border: "1px solid var(--border)", padding: "4px 8px" }}>
+              <span style={{ color: "var(--text-muted)", fontSize: 14 }} title="Filter">{filterActive ? "🔽" : "▸"}</span>
+              <input
+                type="text"
+                className="theme-input"
+                placeholder="Filter hosts, ports, reports…"
+                value={treeFilterInput}
+                onChange={(e) => setTreeFilterInput(e.target.value)}
+                style={{ flex: 1, border: "none", background: "transparent", fontSize: 13, minWidth: 0 }}
+              />
+              {treeFilterInput.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setTreeFilterInput("")}
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0 4px", fontSize: 14 }}
+                  title="Clear filter"
+                  aria-label="Clear filter"
+                >
+                  ✕
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setFilterHelpOpen((v) => !v)}
+                style={{ background: "none", border: "none", cursor: "pointer", color: filterHelpOpen ? "var(--accent)" : "var(--text-muted)", padding: "0 4px", fontSize: 14, fontWeight: 600 }}
+                title="Filter help"
+                aria-label="Filter help"
+              >
+                ?
+              </button>
+            </div>
+            {filterActive && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, fontSize: 11, color: "var(--text-muted)" }}>
+                <span style={{ backgroundColor: "var(--accent)", color: "var(--bg)", padding: "2px 6px", borderRadius: 4 }}>Filtered</span>
+                <span>{visibleHostCount} of {hosts.length} hosts</span>
+              </div>
+            )}
+          </div>
           <div
             className="theme-tree-node"
             style={{ ...nodeStyle(0), paddingLeft: 12, fontWeight: 600, color: scopeSeverity ? getSeverityColor(scopeSeverity) : "var(--text)" }}
@@ -2144,10 +2666,10 @@ export default function MissionDetailPage() {
                 x: e.clientX,
                 y: e.clientY,
                 items: [
+                  { label: "Expand/Collapse", onClick: () => toggleExpandCollapse("scope") },
                   { label: "Add Subnet", onClick: () => setAddSubnetModal(true) },
                   { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "scope" }) },
-                  { label: "Import Hosts", onClick: () => setImportHostsModal({ type: "scope" }) },
-                  { label: "Import GoWitness", onClick: () => setImportGoWitnessModal(true) },
+                  { label: "Import Hosts/Scan Results", onClick: () => setImportHostsModal({ type: "scope" }) },
                 ],
               });
             }}
@@ -2189,11 +2711,12 @@ export default function MissionDetailPage() {
                   );
                 });
               })()}
-              {subnets.map((s) => {
+              {subnets.filter((s) => !filterActive || matchingSubnetIds.has(s.id)).map((s) => {
                 const key = `subnet:${s.id}`;
                 const isExp = expanded.has(key);
                 const isSel = selectedNode?.type === "subnet" && selectedNode.id === s.id;
-                const hostCount = (hostsBySubnet[s.id] ?? []).length;
+                const subnetHosts = (hostsBySubnet[s.id] ?? []).filter((h) => !filterActive || matchingHostIds.has(h.id));
+                const hostCount = filterActive ? subnetHosts.length : (hostsBySubnet[s.id] ?? []).length;
                 return (
                   <div key={s.id}>
                     <div
@@ -2207,6 +2730,7 @@ export default function MissionDetailPage() {
                           x: e.clientX,
                           y: e.clientY,
                           items: [
+                            { label: "Expand/Collapse", onClick: () => toggleExpandCollapse(key) },
                             { label: "Add Host", onClick: () => setAddHostModal({ subnetId: s.id }) },
                             { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "subnet", subnet: s }) },
                             { label: "Import Hosts", onClick: () => setImportHostsModal({ type: "subnet", id: s.id, cidr: s.cidr, name: s.name }) },
@@ -2255,14 +2779,14 @@ export default function MissionDetailPage() {
                             );
                           });
                         })()}
-                        {(hostsBySubnet[s.id] ?? []).map((h) => renderTreeHost(h, 2))}
+                        {subnetHosts.map((h) => renderTreeHost(h, 2))}
                       </>
                     )}
                   </div>
                 );
               })}
               {/* Unresolved: hosts where DNS exists but IP is unresolved */}
-              {(hostsBySubnet["_unresolved"] ?? []).length > 0 && (
+              {(!filterActive ? (hostsBySubnet["_unresolved"] ?? []).length > 0 : hasMatchingUnresolved) && (
                 <div>
                   <div
                     className={"theme-tree-node" + (selectedNode?.type === "unresolved" ? " selected" : "")}
@@ -2271,18 +2795,31 @@ export default function MissionDetailPage() {
                       toggleExpand("unresolved");
                       setSelectedNode({ type: "unresolved" });
                     }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setContextMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        items: [
+                          { label: "Expand/Collapse", onClick: () => toggleExpandCollapse("unresolved") },
+                        ],
+                      });
+                    }}
                   >
                     <span style={{ width: 14 }}>{expanded.has("unresolved") ? "▼" : "▶"}</span>
                     Unresolved
                   </div>
                   {expanded.has("unresolved") &&
-                    (hostsBySubnet["_unresolved"] ?? []).map((h) => (
-                      <div key={h.id}>{renderTreeHost(h, 2)}</div>
-                    ))}
+                    (hostsBySubnet["_unresolved"] ?? [])
+                      .filter((h) => !filterActive || matchingHostIds.has(h.id))
+                      .map((h) => (
+                        <div key={h.id}>{renderTreeHost(h, 2)}</div>
+                      ))}
                 </div>
               )}
               {/* Unassigned: hosts with real IP but no subnet */}
-              {(hostsBySubnet["_unassigned"] ?? []).map((h) => (
+              {(filterActive ? [...matchingUnassignedHostIds].map((id) => hosts.find((h) => h.id === id)).filter(Boolean) as Host[] : (hostsBySubnet["_unassigned"] ?? [])).map((h) => (
                 <div key={h.id}>{renderTreeHost(h, 1)}</div>
               ))}
             </>
@@ -2302,7 +2839,10 @@ export default function MissionDetailPage() {
               setContextMenu({
                 x: ev.clientX,
                 y: ev.clientY,
-                items: [{ label: "Add Vulnerability", onClick: () => setVulnModal({ mode: "add" }) }],
+                items: [
+                  { label: "Expand/Collapse", onClick: () => toggleExpandCollapse("vulnerabilities") },
+                  { label: "Add Vulnerability", onClick: () => setVulnModal({ mode: "add" }) },
+                ],
               });
             }}
           >
@@ -2352,24 +2892,73 @@ export default function MissionDetailPage() {
               )}
             </>
           )}
-          <div className={"theme-tree-node" + (selectedNode?.type === "evidence" ? " selected" : "")} style={{ ...nodeStyle(0), paddingLeft: 12 }} onClick={() => setSelectedNode({ type: "evidence" })}>
-            <span style={{ width: 14 }}>▶</span>
-            Evidence
+          <div
+            className={"theme-tree-node" + (selectedNode?.type === "evidence" ? " selected" : "")}
+            style={{ ...nodeStyle(0), paddingLeft: 12 }}
+            onClick={(ev) => {
+              ev.stopPropagation();
+              toggleExpand("reports");
+              setSelectedNode({ type: "evidence" });
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setContextMenu({
+                x: e.clientX,
+                y: e.clientY,
+                items: [{ label: "Expand/Collapse", onClick: () => toggleExpandCollapse("reports") }],
+              });
+            }}
+          >
+            <span style={{ width: 14 }}>{expanded.has("reports") ? "▼" : "▶"}</span>
+            Reports
           </div>
+          {expanded.has("reports") && (
+            <div
+              className={"theme-tree-node" + (selectedNode?.type === "custom-reports" ? " selected" : "")}
+              style={{ ...nodeStyle(1), paddingLeft: 12 }}
+              onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "custom-reports" }); }}
+            >
+              <span style={{ width: 14 }}>▸</span>
+              Custom Reports
+            </div>
+          )}
           <div className={"theme-tree-node" + (selectedNode?.type === "jobs" ? " selected" : "")} style={{ ...nodeStyle(0), paddingLeft: 12 }} onClick={() => setSelectedNode({ type: "jobs" })}>
             <span style={{ width: 14 }}>▶</span>
             Jobs
           </div>
         </aside>
-        <main style={{ flex: 1, overflowY: "auto", backgroundColor: "var(--bg)", color: "var(--text)" }}>{renderDetailPane()}</main>
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          onMouseDown={(e) => { e.preventDefault(); setIsResizing(true); }}
+          style={{
+            width: 6,
+            minWidth: 6,
+            cursor: "col-resize",
+            backgroundColor: isResizing ? "var(--accent)" : "transparent",
+            flexShrink: 0,
+            margin: 0,
+          }}
+          title="Drag to resize tree"
+        />
+        <main style={{ flex: 1, minWidth: 0, overflowY: "auto", backgroundColor: "var(--bg)", color: "var(--text)" }}>{renderDetailPane()}</main>
+        {filterHelpOpen && (
+          <FilterHelpPanel
+            onClose={() => setFilterHelpOpen(false)}
+            currentFilter={treeFilterInput}
+            onApplyFilter={setTreeFilterInput}
+            parseFilter={parseFilter}
+          />
+        )}
       </div>
 
       {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
-      {importHostsModal && <ImportHostsModal context={importHostsModal} onClose={() => setImportHostsModal(null)} onSuccess={() => {}} />}
-      {importGoWitnessModal && (
-        <ImportGoWitnessModal
+      {importHostsModal && (
+        <ImportHostsModal
           projectId={missionId}
-          onClose={() => setImportGoWitnessModal(false)}
+          context={importHostsModal}
+          onClose={() => setImportHostsModal(null)}
           onSuccess={() => loadData()}
         />
       )}

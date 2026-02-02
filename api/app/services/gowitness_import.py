@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.models import Evidence, Host, Port, Project
 from app.services.audit import log_audit
+from app.services.subnet import find_or_create_subnet_for_ip
 from app.services.gowitness_parser import (
     GOWITNESS_SOURCE,
     GoWitnessRecord,
@@ -116,9 +117,11 @@ def _find_or_create_host(
             db.commit()
         return existing, False
 
+    subnet_id = find_or_create_subnet_for_ip(db, project_id, ip) if parsed.is_ip else None
+
     host = Host(
         project_id=project_id,
-        subnet_id=None,
+        subnet_id=subnet_id,
         ip=ip,
         dns_name=dns,
         status="unknown",

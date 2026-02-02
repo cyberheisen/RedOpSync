@@ -10,6 +10,7 @@ from app.models.models import Host, Project, Subnet, User
 from app.schemas.host import HostCreate, HostUpdate, HostRead
 from app.services.audit import log_audit
 from app.services.lock import require_lock
+from app.services.subnet import find_or_create_subnet_for_ip
 
 router = APIRouter()
 
@@ -38,13 +39,16 @@ def create_host(
     project = db.query(Project).filter(Project.id == body.project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    if body.subnet_id:
-        subnet = db.query(Subnet).filter(Subnet.id == body.subnet_id).first()
+    subnet_id = body.subnet_id
+    if not subnet_id and body.ip and body.ip.strip().lower() != "unresolved":
+        subnet_id = find_or_create_subnet_for_ip(db, body.project_id, body.ip)
+    if subnet_id:
+        subnet = db.query(Subnet).filter(Subnet.id == subnet_id).first()
         if not subnet or subnet.project_id != body.project_id:
             raise HTTPException(status_code=404, detail="Subnet not found or not in project")
     host = Host(
         project_id=body.project_id,
-        subnet_id=body.subnet_id,
+        subnet_id=subnet_id,
         ip=body.ip,
         dns_name=body.dns_name,
         tags=list(body.tags) if body.tags else None,
