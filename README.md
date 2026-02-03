@@ -43,7 +43,7 @@ The stack is a **Next.js** front end and **FastAPI** backend with **PostgreSQL**
 ### 1. Clone the repository
 
 ```bash
-https://github.com/cyberheisen/RedOpSync.git
+git clone https://github.com/cyberheisen/RedOpSync.git
 cd RedOpSync
 ```
 
