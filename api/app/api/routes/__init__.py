@@ -6,6 +6,7 @@ from app.api.routes import (
     subnets,
     hosts,
     ports,
+    todos,
     locks,
     vulnerability_instances,
     vulnerability_definitions,
@@ -30,6 +31,7 @@ router.include_router(projects.router, prefix="/projects", tags=["projects"])
 router.include_router(subnets.router, prefix="/subnets", tags=["subnets"])
 router.include_router(hosts.router, prefix="/hosts", tags=["hosts"])
 router.include_router(ports.router, prefix="/ports", tags=["ports"])
+router.include_router(todos.router, prefix="/todos", tags=["todos"])
 router.include_router(locks.router, prefix="/locks", tags=["locks"])
 router.include_router(vulnerability_instances.router, prefix="/vulnerability-instances", tags=["vulnerability-instances"])
 router.include_router(vulnerability_definitions.router, prefix="/vulnerability-definitions", tags=["vulnerability-definitions"])

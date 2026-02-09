@@ -42,10 +42,13 @@ class Project(Base):
     end_date = Column(DateTime(timezone=True), nullable=True)
     countdown_red_days_default = Column(Integer, nullable=False, default=7)
     scope_policy = Column(JSONB, nullable=True)
+    sort_mode = Column(String(32), nullable=False, default="cidr_asc")
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
     subnets = relationship("Subnet", back_populates="project", cascade="all, delete-orphan")
     hosts = relationship("Host", back_populates="project", cascade="all, delete-orphan")
+    todos = relationship("Todo", back_populates="project", cascade="all, delete-orphan")
+    saved_reports = relationship("SavedReport", back_populates="project", cascade="all, delete-orphan")
 
 
 class Subnet(Base):
@@ -223,6 +226,8 @@ class Note(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_default)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_type = Column(String(32), nullable=False, default="scope")
+    target_id = Column(UUID(as_uuid=True), nullable=True)
     subnet_id = Column(UUID(as_uuid=True), ForeignKey("subnets.id", ondelete="CASCADE"), nullable=True, index=True)
     host_id = Column(UUID(as_uuid=True), ForeignKey("hosts.id", ondelete="CASCADE"), nullable=True, index=True)
     port_id = Column(UUID(as_uuid=True), ForeignKey("ports.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -234,6 +239,48 @@ class Note(Base):
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Todo(Base):
+    __tablename__ = "todos"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_default)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_type = Column(String(32), nullable=False, default="scope")
+    target_id = Column(UUID(as_uuid=True), nullable=True)
+    title = Column(String(512), nullable=False)
+    body = Column(Text, nullable=True)
+    assigned_to_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    completion_notes = Column(Text, nullable=True)
+    status = Column(String(16), nullable=False, default="open")
+    subnet_id = Column(UUID(as_uuid=True), ForeignKey("subnets.id", ondelete="SET NULL"), nullable=True, index=True)
+    host_id = Column(UUID(as_uuid=True), ForeignKey("hosts.id", ondelete="SET NULL"), nullable=True, index=True)
+    port_id = Column(UUID(as_uuid=True), ForeignKey("ports.id", ondelete="SET NULL"), nullable=True, index=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    project = relationship("Project", back_populates="todos")
+    subnet = relationship("Subnet", backref="todos")
+    host = relationship("Host", backref="todos")
+    port = relationship("Port", backref="todos")
+    assigned_to = relationship("User", foreign_keys=[assigned_to_user_id])
+
+
+class SavedReport(Base):
+    __tablename__ = "saved_reports"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_default)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    data_source = Column(String(64), nullable=False)
+    columns = Column(JSONB, nullable=False)
+    filter_expression = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    project = relationship("Project", back_populates="saved_reports")
 
 
 class Lock(Base):

@@ -11,14 +11,26 @@ from app.schemas.host import HostCreate, HostUpdate, HostRead
 from app.services.audit import log_audit
 from app.services.lock import require_lock
 from app.services.subnet import find_or_create_subnet_for_ip
+from app.services.sort import apply_host_order, SORT_MODES, DEFAULT_SORT
 
 router = APIRouter()
+
+
+def _resolve_sort_mode(db: Session, project_id: UUID | None, sort_mode: str | None) -> str:
+    if sort_mode and sort_mode in SORT_MODES:
+        return sort_mode
+    if project_id:
+        proj = db.query(Project).filter(Project.id == project_id).first()
+        if proj and getattr(proj, "sort_mode", None) in SORT_MODES:
+            return proj.sort_mode
+    return DEFAULT_SORT
 
 
 @router.get("", response_model=list[HostRead])
 def list_hosts(
     project_id: UUID | None = Query(None),
     subnet_id: UUID | None = Query(None),
+    sort_mode: str | None = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -27,7 +39,9 @@ def list_hosts(
         q = q.filter(Host.project_id == project_id)
     if subnet_id is not None:
         q = q.filter(Host.subnet_id == subnet_id)
-    return q.order_by(Host.ip).all()
+    mode = _resolve_sort_mode(db, project_id, sort_mode)
+    q = apply_host_order(q, mode, join_subnet=(project_id is not None))
+    return q.all()
 
 
 @router.post("", response_model=HostRead, status_code=201)

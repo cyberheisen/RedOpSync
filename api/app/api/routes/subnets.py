@@ -10,20 +10,34 @@ from app.models.models import Host, Subnet, Project, User
 from app.schemas.subnet import SubnetCreate, SubnetUpdate, SubnetRead
 from app.services.audit import log_audit
 from app.services.lock import require_lock
+from app.services.sort import apply_subnet_order, SORT_MODES, DEFAULT_SORT
 
 router = APIRouter()
+
+
+def _resolve_sort_mode(db: Session, project_id: UUID | None, sort_mode: str | None) -> str:
+    if sort_mode and sort_mode in SORT_MODES:
+        return sort_mode
+    if project_id:
+        proj = db.query(Project).filter(Project.id == project_id).first()
+        if proj and getattr(proj, "sort_mode", None) in SORT_MODES:
+            return proj.sort_mode
+    return DEFAULT_SORT
 
 
 @router.get("", response_model=list[SubnetRead])
 def list_subnets(
     project_id: UUID | None = Query(None),
+    sort_mode: str | None = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     q = db.query(Subnet)
     if project_id is not None:
         q = q.filter(Subnet.project_id == project_id)
-    return q.order_by(Subnet.created_at).all()
+    mode = _resolve_sort_mode(db, project_id, sort_mode)
+    q = apply_subnet_order(q, mode)
+    return q.all()
 
 
 @router.post("", response_model=SubnetRead, status_code=201)

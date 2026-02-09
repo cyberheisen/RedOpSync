@@ -12,6 +12,10 @@ class NoteCreate(BaseModel):
     evidence_id: UUID | None = None
     vuln_instance_id: UUID | None = None
     body_md: str | None = None
+    target_type: str | None = Field(
+        None, pattern="^(scope|subnet|host|host_ports|port|evidence|vulnerabilities|vulnerability_definition)$"
+    )
+    target_id: UUID | None = None
 
 
 class NoteUpdate(BaseModel):
@@ -21,6 +25,8 @@ class NoteUpdate(BaseModel):
 class NoteRead(BaseModel):
     id: UUID
     project_id: UUID
+    target_type: str
+    target_id: UUID | None
     subnet_id: UUID | None
     host_id: UUID | None
     port_id: UUID | None

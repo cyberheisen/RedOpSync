@@ -65,7 +65,33 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Logo variant="nav" />
           <UserMenu />
         </header>
-        <AuthGuard>{children}</AuthGuard>
+        <AuthGuard>
+          <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+            <div style={{ flex: 1 }}>{children}</div>
+            <footer
+              style={{
+                padding: "12px 24px",
+                borderTop: "1px solid var(--border)",
+                backgroundColor: "var(--bg-panel)",
+                color: "var(--text-muted)",
+                fontSize: 13,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                flexWrap: "wrap",
+              }}
+            >
+              <span>© {new Date().getFullYear()} RedOpSync</span>
+              <span>·</span>
+              <span>Licensed under the MIT License</span>
+              <span>·</span>
+              <a href="/LICENSE" className="theme-link" target="_blank" rel="noopener noreferrer">
+                MIT License
+              </a>
+            </footer>
+          </div>
+        </AuthGuard>
       </body>
     </html>
   );

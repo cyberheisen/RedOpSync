@@ -18,10 +18,21 @@ export type Subnet = { id: string; cidr: string; name: string | null };
 
 export type BuilderColumns = Record<string, [string, string][]>;
 
+export type SavedReportItem = {
+  id: string;
+  project_id: string;
+  name: string;
+  description: string | null;
+  query_definition: { data_source: string; columns: string[]; filter_expression: string };
+  created_at: string;
+};
+
 type CustomReportsPanelProps = {
   projectId: string;
   subnets: Subnet[];
   onToast?: (msg: string) => void;
+  savedReports?: SavedReportItem[];
+  onSavedReportsChange?: () => void;
 };
 
 function formatRowsToText(rows: Record<string, unknown>[]): string {
@@ -71,7 +82,7 @@ const FILTER_EXAMPLES = [
   "unresolved == false",
 ];
 
-export function CustomReportsPanel({ projectId, subnets, onToast }: CustomReportsPanelProps) {
+export function CustomReportsPanel({ projectId, subnets, onToast, savedReports = [], onSavedReportsChange }: CustomReportsPanelProps) {
   const [builderColumns, setBuilderColumns] = useState<BuilderColumns>({});
   const [builderDataSource, setBuilderDataSource] = useState("hosts");
   const [builderSelectedCols, setBuilderSelectedCols] = useState<string[]>(["ip", "hostname"]);
@@ -96,6 +107,9 @@ export function CustomReportsPanel({ projectId, subnets, onToast }: CustomReport
     port_protocol: "",
     severity: "",
   });
+  const [saveName, setSaveName] = useState("");
+  const [saveDesc, setSaveDesc] = useState("");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetch(apiUrl(`/api/projects/${projectId}/reports/configs`), { credentials: "include" })
@@ -339,11 +353,67 @@ export function CustomReportsPanel({ projectId, subnets, onToast }: CustomReport
           </div>
         )}
 
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
           <button type="button" className="theme-btn theme-btn-primary" onClick={runBuilderReport} disabled={builderLoading}>
             {builderLoading ? "Loading…" : "Run report"}
           </button>
           <span style={{ fontSize: 14, color: "var(--text-muted)" }}>{builderRows.length} results</span>
+          {onSavedReportsChange && (
+            <>
+              <input
+                type="text"
+                placeholder="Save as name"
+                value={saveName}
+                onChange={(e) => setSaveName(e.target.value)}
+                style={{ width: 140, padding: "6px 10px", fontSize: 13, border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg-panel)", color: "var(--text)" }}
+              />
+              <input
+                type="text"
+                placeholder="Description (optional)"
+                value={saveDesc}
+                onChange={(e) => setSaveDesc(e.target.value)}
+                style={{ width: 160, padding: "6px 10px", fontSize: 13, border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg-panel)", color: "var(--text)" }}
+              />
+              <button
+                type="button"
+                className="theme-btn theme-btn-ghost"
+                disabled={!saveName.trim() || saving}
+                onClick={() => {
+                  const name = saveName.trim();
+                  if (!name) return;
+                  setSaving(true);
+                  fetch(apiUrl(`/api/projects/${projectId}/reports/saved`), {
+                    method: "POST",
+                    credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      name,
+                      description: saveDesc.trim() || null,
+                      query_definition: {
+                        data_source: builderDataSource,
+                        columns: builderSelectedCols.length ? builderSelectedCols : (builderColumns[builderDataSource] ?? []).map(([id]) => id),
+                        filter_expression: builderFilter.trim(),
+                      },
+                    }),
+                  })
+                    .then((r) => {
+                      if (!r.ok) return r.json().then((d) => { throw new Error(formatApiErrorDetail(d?.detail, "Save failed")); });
+                      return r.json();
+                    })
+                    .then(() => {
+                      setSaveName("");
+                      setSaveDesc("");
+                      onSavedReportsChange();
+                      onToast?.("Report saved");
+                    })
+                    .catch((e) => onToast?.(e instanceof Error ? e.message : "Save failed"))
+                    .finally(() => setSaving(false));
+                }}
+              >
+                {saving ? "Saving…" : "Save report"}
+              </button>
+            </>
+          )}
           <select
             value={builderExportFormat}
             onChange={(e) => setBuilderExportFormat(e.target.value as "txt" | "csv" | "json")}

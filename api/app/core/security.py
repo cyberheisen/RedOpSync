@@ -1,22 +1,29 @@
 from datetime import datetime, timezone, timedelta
 from uuid import UUID
 
+import bcrypt
 import jwt
-from passlib.context import CryptContext
 
 from app.core.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 TOKEN_COOKIE_NAME = "redopsync_session"
+
+# bcrypt has a 72-byte limit; longer passwords are rejected to avoid silent truncation
+BCRYPT_MAX_PASSWORD_BYTES = 72
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    encoded = password.encode("utf-8")
+    if len(encoded) > BCRYPT_MAX_PASSWORD_BYTES:
+        raise ValueError("Password is too long (max 72 bytes).")
+    return bcrypt.hashpw(encoded, bcrypt.gensalt()).decode("ascii")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("ascii"))
+    except (ValueError, TypeError):
+        return False
 
 
 def create_access_token(user_id: UUID, username: str, role: str) -> str:

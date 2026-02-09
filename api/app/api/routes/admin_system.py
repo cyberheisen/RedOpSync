@@ -9,7 +9,23 @@ from sqlalchemy.orm import Session
 
 from app.core.admin_deps import require_admin
 from app.db.session import get_db, engine
-from app.models.models import Session as SessionModel, User
+from app.models.models import (
+    Application,
+    AuditEvent,
+    Evidence,
+    ImportExportJob,
+    Job,
+    Lock,
+    Note,
+    Project,
+    Session as SessionModel,
+    Todo,
+    User,
+    VulnerabilityAttachment,
+    VulnerabilityDefinition,
+    VulnerabilityInstance,
+    VulnerabilitySubnetAssociation,
+)
 from app.services.audit import log_audit
 
 router = APIRouter()
@@ -134,6 +150,44 @@ def force_logout_all(
     )
     db.commit()
     return {"ok": True, "terminated": deleted}
+
+
+@router.post("/reset-to-defaults", status_code=200)
+def reset_to_defaults(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Remove all data and return to a clean install state. Only admin user(s) are preserved. All other users and sessions are removed."""
+    # Delete in dependency order so FK constraints are satisfied.
+    db.query(SessionModel).delete()
+    db.query(Lock).delete()
+    db.query(Job).delete()
+    db.query(AuditEvent).delete()
+    db.query(ImportExportJob).delete()
+    db.query(Note).delete()
+    db.query(Todo).delete()
+    db.query(Evidence).delete()
+    db.query(VulnerabilityInstance).delete()
+    db.query(VulnerabilityAttachment).delete()
+    db.query(VulnerabilitySubnetAssociation).delete()
+    db.query(Application).delete()
+    db.query(VulnerabilityDefinition).delete()
+    db.query(Project).delete()  # cascade deletes Subnet, Host, Port, SavedReport
+    # Remove all non-admin users (admin accounts are kept)
+    deleted_users = db.query(User).filter(User.role != "admin").delete()
+    db.commit()
+    log_audit(
+        db,
+        user_id=current_user.id,
+        action_type="reset_to_defaults",
+        record_type="system",
+        record_id=None,
+        after_json={"message": "All data and non-admin users removed", "deleted_users": deleted_users},
+        ip_address=_get_client_ip(request),
+    )
+    db.commit()
+    return {"ok": True, "message": "Reset complete. All data and non-admin users removed. You may need to log in again."}
 
 
 @router.post("/cleanup-orphans", status_code=200)

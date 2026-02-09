@@ -2,6 +2,8 @@
 
 **RedOpSync** is a collaborative red-team and penetration testing engagement portal. It helps operators manage scope, hosts, ports, evidence, and vulnerabilities in one place—with optional locking so multiple analysts can work without overwriting each other.
 
+This project is licensed under the [MIT License](LICENSE).
+
 ---
 
 ## Description

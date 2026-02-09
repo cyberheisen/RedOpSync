@@ -118,6 +118,26 @@ export default function AdminSystemPage() {
     });
   };
 
+  const handleResetToDefaults = () => {
+    setConfirmModal({
+      title: "Reset to Defaults",
+      message: "This will permanently delete all data: missions, hosts, ports, notes, todos, evidence, vulnerabilities, audit log, and sessions. Admin user(s) will remain. The application will be in a clean install state. You will need to log in again. This cannot be undone.",
+      confirmText: "Reset Everything",
+      action: async () => {
+        const res = await fetch(apiUrl("/api/admin/system/reset-to-defaults"), { method: "POST", credentials: "include" });
+        setConfirmModal(null);
+        if (res.ok) {
+          setToast("Reset complete. Logging out…");
+          await fetch(apiUrl("/api/auth/logout"), { method: "POST", credentials: "include" });
+          window.location.href = "/login";
+        } else {
+          const d = await res.json().catch(() => ({}));
+          setToast(d.detail ?? "Reset failed");
+        }
+      },
+    });
+  };
+
   const handleTerminateSession = async (session: Session) => {
     const res = await fetch(apiUrl(`/api/admin/system/sessions/${session.id}/terminate`), { method: "POST", credentials: "include" });
     if (res.ok) {
@@ -137,6 +157,33 @@ export default function AdminSystemPage() {
           Database maintenance and session management
         </p>
       </div>
+
+      {/* Reset to defaults */}
+      <section style={{ marginBottom: 32 }}>
+        <h2 style={{ margin: "0 0 16px", fontSize: "1.125rem", color: "var(--error)" }}>
+          Reset to Defaults
+        </h2>
+        <div
+          style={{
+            backgroundColor: "var(--bg-panel)",
+            borderRadius: 8,
+            border: "1px solid var(--error)",
+            padding: 20,
+          }}
+        >
+          <p style={{ margin: "0 0 12px", color: "var(--text-muted)", fontSize: 13 }}>
+            Remove all missions, hosts, ports, notes, todos, evidence, vulnerabilities, audit log, sessions, and all non-admin users. Only admin accounts remain. Puts the program in a clean install state. You will be logged out after reset.
+          </p>
+          <button
+            type="button"
+            className="theme-btn"
+            style={{ backgroundColor: "var(--error)", borderColor: "var(--error)", color: "#fff" }}
+            onClick={handleResetToDefaults}
+          >
+            Reset to Defaults
+          </button>
+        </div>
+      </section>
 
       {/* Database Maintenance */}
       <section style={{ marginBottom: 32 }}>

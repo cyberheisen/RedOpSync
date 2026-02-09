@@ -17,6 +17,7 @@ from app.schemas.port import PortCreate, PortUpdate, PortRead, PortReadWithAttac
 from app.schemas.evidence import EvidenceRead, EvidenceNotesUpdate
 from app.services.lock import require_lock
 from app.services.audit import log_audit
+from app.services.sort import apply_port_order, SORT_MODES, DEFAULT_SORT
 
 router = APIRouter()
 
@@ -24,13 +25,16 @@ router = APIRouter()
 @router.get("", response_model=list[PortRead])
 def list_ports(
     host_id: UUID | None = Query(None),
+    sort_mode: str | None = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     q = db.query(Port)
     if host_id is not None:
         q = q.filter(Port.host_id == host_id)
-    return q.order_by(Port.host_id, Port.protocol, Port.number).all()
+    mode = sort_mode if sort_mode in SORT_MODES else DEFAULT_SORT
+    q = apply_port_order(q, mode)
+    return q.all()
 
 
 @router.post("", response_model=PortRead, status_code=201)

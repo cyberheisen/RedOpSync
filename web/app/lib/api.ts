@@ -1,6 +1,6 @@
 /**
- * API base URL for browser requests. Call API directly to avoid Next.js proxy issues.
- * Must be reachable from the browser (e.g. http://localhost:8000 when using Docker port mapping).
+ * API base URL for browser requests. Must be reachable from the browser
+ * (e.g. http://localhost:8000 when using Docker port mapping).
  */
 export function getApiBase(): string {
   if (typeof window !== "undefined") {

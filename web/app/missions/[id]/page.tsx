@@ -22,6 +22,8 @@ import { RenameHostModal } from "../../components/rename-host-modal";
 import { RenameSubnetModal } from "../../components/rename-subnet-modal";
 import { StubModal } from "../../components/stub-modal";
 import { CustomReportsPanel } from "../../components/custom-reports-panel";
+import { TodosPanel } from "../../components/todos-panel";
+import { AddTodoModal } from "../../components/add-todo-modal";
 import { Toast } from "../../components/toast";
 import { renderMarkdown } from "../../lib/markdown";
 import {
@@ -117,7 +119,7 @@ type PortEvidence = {
   created_at: string;
 };
 
-type NoteTarget = "scope" | "subnet" | "host" | "port" | "evidence";
+type NoteTarget = "scope" | "subnet" | "host" | "host_ports" | "port" | "evidence" | "vulnerabilities" | "vulnerability_definition";
 
 type Note = {
   id: string;
@@ -133,6 +135,8 @@ type Note = {
   updated_at?: string;
   attachments?: NoteAttachmentDisplay[];
   locked_by?: string | null;
+  target_type?: string;
+  target_id?: string | null;
 };
 
 type Mission = {
@@ -142,6 +146,7 @@ type Mission = {
   start_date: string | null;
   end_date: string | null;
   countdown_red_days_default: number;
+  sort_mode?: string;
 };
 
 type SelectedNode =
@@ -157,8 +162,10 @@ type SelectedNode =
   | { type: "unresolved" }
   | { type: "note"; id: string; target: NoteTarget; targetId: string }
   | { type: "vulnerabilities" }
-  | { type: "evidence" }
   | { type: "custom-reports" }
+  | { type: "saved-report"; id: string }
+  | { type: "todos" }
+  | { type: "todo"; id: string }
   | { type: "jobs" }
   | null;
 
@@ -486,6 +493,104 @@ function FilterHelpPanel({
   );
 }
 
+function SavedReportRunView({
+  projectId,
+  report,
+  onToast,
+}: {
+  projectId: string;
+  report: { id: string; name: string; description: string | null; query_definition: { data_source: string; columns: string[]; filter_expression: string } };
+  onToast?: (msg: string) => void;
+}) {
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [loading, setLoading] = useState(false);
+  const runReport = () => {
+    setLoading(true);
+    fetch(apiUrl(`/api/projects/${projectId}/reports/saved/${report.id}/run`), {
+      method: "POST",
+      credentials: "include",
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Run failed"))))
+      .then((data: { rows?: Record<string, unknown>[] }) => {
+        setRows(data.rows ?? []);
+        onToast?.("Report run complete");
+      })
+      .catch(() => onToast?.("Run failed"))
+      .finally(() => setLoading(false));
+  };
+  const exportCsv = () => {
+    if (rows.length === 0) return;
+    const keys = Object.keys(rows[0]!);
+    const escape = (v: unknown) => {
+      const s = String(v ?? "");
+      return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const header = keys.map(escape).join(",");
+    const lines = rows.map((r) => keys.map((k) => escape(r[k])).join(","));
+    const content = [header, ...lines].join("\n");
+    const blob = new Blob([content], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${report.name.replace(/\s+/g, "-")}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    onToast?.("CSV downloaded");
+  };
+  const exportJson = () => {
+    const content = JSON.stringify(rows, null, 2);
+    const blob = new Blob([content], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${report.name.replace(/\s+/g, "-")}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    onToast?.("JSON downloaded");
+  };
+  const keys = rows.length > 0 ? Object.keys(rows[0]!) : [];
+  return (
+    <div style={{ padding: 24 }}>
+      <h2 style={{ margin: "0 0 8px", fontSize: "1.25rem" }}>{report.name}</h2>
+      {report.description && <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>{report.description}</p>}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <button type="button" className="theme-btn theme-btn-primary" onClick={runReport} disabled={loading}>
+          {loading ? "Running…" : "Run report"}
+        </button>
+        {rows.length > 0 && (
+          <>
+            <button type="button" className="theme-btn theme-btn-ghost" onClick={exportCsv}>Export CSV</button>
+            <button type="button" className="theme-btn theme-btn-ghost" onClick={exportJson}>Export JSON</button>
+          </>
+        )}
+      </div>
+      {rows.length > 0 && (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr>
+                {keys.map((k) => (
+                  <th key={k} style={{ textAlign: "left", padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>{k}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.slice(0, 500).map((r, i) => (
+                <tr key={i}>
+                  {keys.map((k) => (
+                    <td key={k} style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-subtle)" }}>{String(r[k] ?? "")}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {rows.length > 500 && <p style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 8 }}>Showing first 500 of {rows.length} rows.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function MissionDetailPage() {
   const params = useParams();
   const missionId = params.id as string;
@@ -516,6 +621,8 @@ export default function MissionDetailPage() {
   const [vulnsLoading, setVulnsLoading] = useState<Set<string>>(new Set());
   const [notesLoading, setNotesLoading] = useState<Set<string>>(new Set());
   const [scopeNotesLoading, setScopeNotesLoading] = useState(false);
+  const [projectNotes, setProjectNotes] = useState<Note[]>([]);
+  const [notesVersion, setNotesVersion] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedNode, setSelectedNode] = useState<SelectedNode>(null);
@@ -536,10 +643,11 @@ export default function MissionDetailPage() {
     port?: Port;
     subnet?: Subnet;
     evidence?: PortEvidence;
+    definition?: VulnDefinition;
     note?: Note;
   } | null>(null);
-  const [notePrintView, setNotePrintView] = useState<{ note: Note; target: NoteTarget; host?: Host; port?: Port; subnet?: Subnet; evidence?: PortEvidence } | null>(null);
-  const [deleteNoteModal, setDeleteNoteModal] = useState<{ note: Note; target: NoteTarget; host?: Host; port?: Port; subnet?: Subnet; evidence?: PortEvidence } | null>(null);
+  const [notePrintView, setNotePrintView] = useState<{ note: Note; target: NoteTarget; host?: Host; port?: Port; subnet?: Subnet; evidence?: PortEvidence; definition?: VulnDefinition } | null>(null);
+  const [deleteNoteModal, setDeleteNoteModal] = useState<{ note: Note; target: NoteTarget; host?: Host; port?: Port; subnet?: Subnet; evidence?: PortEvidence; definition?: VulnDefinition } | null>(null);
   const [portModal, setPortModal] = useState<{ mode: "add" | "edit"; host: Host; port?: Port } | null>(null);
   const [deletePortModal, setDeletePortModal] = useState<{ port: Port; host: Host } | null>(null);
   const [deleteHostModal, setDeleteHostModal] = useState<Host | null>(null);
@@ -552,6 +660,14 @@ export default function MissionDetailPage() {
   const [deleteVulnModal, setDeleteVulnModal] = useState<{ instance: VulnInstance } | null>(null);
   const [stubModal, setStubModal] = useState<{ title: string; message?: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [savedReports, setSavedReports] = useState<{ id: string; project_id: string; name: string; description: string | null; query_definition: { data_source: string; columns: string[]; filter_expression: string }; created_at: string }[]>([]);
+  type TodoParentType = "scope" | "subnet" | "host" | "host_ports" | "port" | "vulnerabilities" | "vulnerability_definition";
+  const [addTodoModal, setAddTodoModal] = useState<{ parentType: TodoParentType; parentId?: string | null; contextLabel?: string } | null>(null);
+  const [todosVersion, setTodosVersion] = useState(0);
+  type ProjectTodo = { id: string; project_id: string; title: string; description: string | null; status: string; subnet_id: string | null; host_id: string | null; port_id: string | null; assigned_to_user_id: string | null; assigned_to_username: string | null; target_type: string; target_id: string | null; created_at: string; updated_at: string };
+  const [projectTodos, setProjectTodos] = useState<ProjectTodo[]>([]);
+  type UserOption = { id: string; username: string; role: string };
+  const [users, setUsers] = useState<UserOption[]>([]);
 
   const TREE_WIDTH_KEY = "redopsync-tree-width";
   const defaultTreeWidth = 280;
@@ -623,10 +739,11 @@ export default function MissionDetailPage() {
       .finally(() => setEvidenceLoading((p) => { const n = new Set(p); n.delete(portId); return n; }));
   }, [evidenceLoaded, evidenceLoading]);
 
-  const loadPortsForHost = useCallback((hostId: string) => {
+  const loadPortsForHost = useCallback((hostId: string, sortMode?: string) => {
     if (portsLoaded.has(hostId) || portsLoading.has(hostId)) return;
     setPortsLoading((p) => new Set(p).add(hostId));
-    fetch(apiUrl(`/api/ports?host_id=${hostId}`), { credentials: "include" })
+    const sortQ = sortMode ? `&sort_mode=${encodeURIComponent(sortMode)}` : "";
+    fetch(apiUrl(`/api/ports?host_id=${hostId}${sortQ}`), { credentials: "include" })
       .then((r) => (r.ok ? r.json() : []))
       .then((ports: Port[]) => {
         setPortsByHost((prev) => ({ ...prev, [hostId]: ports }));
@@ -754,6 +871,31 @@ export default function MissionDetailPage() {
       .finally(() => setNotesByEvidenceLoading((p) => { const n = new Set(p); n.delete(evidenceId); return n; }));
   }, [missionId, notesByEvidenceLoaded, notesByEvidenceLoading]);
 
+  const loadProjectNotes = useCallback(() => {
+    if (!missionId) return;
+    fetch(apiUrl(`/api/notes?project_id=${missionId}`), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((raw: { id: string; target_type?: string; target_id?: string | null; body_md: string | null; created_at?: string; updated_at?: string }[]) => {
+        const notes: Note[] = raw.map((n) => ({
+          ...n,
+          target_type: n.target_type ?? "scope",
+          target_id: n.target_id ?? null,
+          title: null,
+          created_by: "Unknown",
+          created_at: n.created_at ?? new Date().toISOString(),
+          updated_by: "Unknown",
+          updated_at: (n as { updated_at?: string }).updated_at ?? n.created_at ?? new Date().toISOString(),
+          attachments: [],
+        }));
+        setProjectNotes(notes);
+      })
+      .catch(() => setProjectNotes([]));
+  }, [missionId]);
+
+  useEffect(() => {
+    if (missionId) loadProjectNotes();
+  }, [missionId, loadProjectNotes, notesVersion]);
+
   const loadVulnDefinitions = useCallback(() => {
     if (vulnDefinitionsLoaded || vulnDefinitionsLoading) return;
     setVulnDefinitionsLoading(true);
@@ -795,19 +937,25 @@ export default function MissionDetailPage() {
     setNotesLoaded(new Set());
     setNotesByPortLoaded(new Set());
     setScopeNotesLoaded(false);
-    Promise.all([
-      fetch(apiUrl(`/api/projects/${missionId}`), { credentials: "include" }),
-      fetch(apiUrl(`/api/subnets?project_id=${missionId}`), { credentials: "include" }),
-      fetch(apiUrl(`/api/hosts?project_id=${missionId}`), { credentials: "include" }),
-    ])
-      .then(async ([projRes, subnetsRes, hostsRes]) => {
+    fetch(apiUrl(`/api/projects/${missionId}`), { credentials: "include" })
+      .then((projRes) => {
         if (!projRes.ok) throw new Error("Mission not found");
-        if (!subnetsRes.ok) throw new Error("Failed to load subnets");
-        if (!hostsRes.ok) throw new Error("Failed to load hosts");
-        const [proj, subnetList, hostList] = await Promise.all([projRes.json(), subnetsRes.json(), hostsRes.json()]);
+        return projRes.json();
+      })
+      .then((proj) => {
+        const mode = proj.sort_mode || "cidr_asc";
+        const sortQ = `&sort_mode=${encodeURIComponent(mode)}`;
         setMission(proj);
-        setSubnets(subnetList);
-        setHosts(hostList);
+        return Promise.all([
+          fetch(apiUrl(`/api/subnets?project_id=${missionId}${sortQ}`), { credentials: "include" }),
+          fetch(apiUrl(`/api/hosts?project_id=${missionId}${sortQ}`), { credentials: "include" }),
+        ]).then(async ([subnetsRes, hostsRes]) => {
+          if (!subnetsRes.ok) throw new Error("Failed to load subnets");
+          if (!hostsRes.ok) throw new Error("Failed to load hosts");
+          const [subnetList, hostList] = await Promise.all([subnetsRes.json(), hostsRes.json()]);
+          setSubnets(subnetList);
+          setHosts(hostList);
+        });
       })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
@@ -816,6 +964,37 @@ export default function MissionDetailPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const loadSavedReports = useCallback(() => {
+    if (!missionId) return;
+    fetch(apiUrl(`/api/projects/${missionId}/reports/saved`), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: unknown) => setSavedReports(Array.isArray(list) ? list : []))
+      .catch(() => setSavedReports([]));
+  }, [missionId]);
+
+  useEffect(() => {
+    if (missionId) loadSavedReports();
+  }, [missionId, loadSavedReports]);
+
+  const loadProjectTodos = useCallback(() => {
+    if (!missionId) return;
+    fetch(apiUrl(`/api/todos?project_id=${missionId}&status=all`), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: unknown) => setProjectTodos(Array.isArray(list) ? list : []))
+      .catch(() => setProjectTodos([]));
+  }, [missionId]);
+
+  useEffect(() => {
+    if (missionId) loadProjectTodos();
+  }, [missionId, loadProjectTodos, todosVersion]);
+
+  useEffect(() => {
+    fetch(apiUrl("/api/auth/users"), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: unknown) => setUsers(Array.isArray(list) ? list : []))
+      .catch(() => setUsers([]));
+  }, []);
 
   useEffect(() => {
     if (mission && !vulnDefinitionsLoaded && !vulnDefinitionsLoading) {
@@ -826,11 +1005,12 @@ export default function MissionDetailPage() {
   const hostIds = hosts.map((h) => h.id).sort().join(",");
   useEffect(() => {
     if (!mission || hosts.length === 0) return;
+    const sortMode = mission.sort_mode || "cidr_asc";
     hosts.forEach((h) => {
-      loadPortsForHost(h.id);
+      loadPortsForHost(h.id, sortMode);
       loadVulnsForHost(h.id);
     });
-  }, [mission?.id, hostIds, loadPortsForHost, loadVulnsForHost]);
+  }, [mission?.id, mission?.sort_mode, hostIds, loadPortsForHost, loadVulnsForHost]);
 
   const selectedHost =
     selectedNode?.type === "host" || selectedNode?.type === "host-ports" || selectedNode?.type === "host-vulnerabilities" || (selectedNode?.type === "note" && selectedNode.target === "host")
@@ -1188,7 +1368,7 @@ export default function MissionDetailPage() {
       updated_by: "You" as const,
       updated_at: new Date().toISOString(),
     };
-    const apiTargets: NoteTarget[] = ["scope", "subnet", "host", "port", "evidence"];
+    const apiTargets: NoteTarget[] = ["scope", "subnet", "host", "host_ports", "port", "evidence", "vulnerabilities", "vulnerability_definition"];
     if (apiTargets.includes(target)) {
       try {
         if (existingNote) {
@@ -1199,22 +1379,20 @@ export default function MissionDetailPage() {
             body: JSON.stringify({ body_md: bodyMd }),
           });
           if (!res.ok) throw new Error("Failed to update note");
+          const updatedNote: Note = { ...existingNote, ...baseNote };
+          setProjectNotes((prev) => prev.map((n) => (n.id === existingNote.id ? updatedNote : n)));
           if (target === "scope") setScopeNotes((prev) => prev.map((n) => (n.id === existingNote.id ? { ...n, ...baseNote } : n)));
           else if (target === "subnet") setNotesBySubnet((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).map((n) => (n.id === existingNote.id ? { ...n, ...baseNote } : n)) }));
-          else if (target === "host") setNotesByHost((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).map((n) => (n.id === existingNote.id ? { ...n, ...baseNote } : n)) }));
+          else if (target === "host" || target === "host_ports") setNotesByHost((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).map((n) => (n.id === existingNote.id ? { ...n, ...baseNote } : n)) }));
           else if (target === "port") setNotesByPort((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).map((n) => (n.id === existingNote.id ? { ...n, ...baseNote } : n)) }));
-          else setNotesByEvidence((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).map((n) => (n.id === existingNote.id ? { ...n, ...baseNote } : n)) }));
+          else if (target === "evidence") setNotesByEvidence((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).map((n) => (n.id === existingNote.id ? { ...n, ...baseNote } : n)) }));
         } else {
-          const body: { project_id: string; subnet_id?: string; host_id?: string; port_id?: string; evidence_id?: string; body_md: string } = {
+          const body: { project_id: string; target_type: string; target_id?: string | null; body_md: string } = {
             project_id: missionId,
+            target_type: target,
+            target_id: target === "scope" || target === "vulnerabilities" ? null : targetId || null,
             body_md: bodyMd,
           };
-          if (target === "scope") {
-            /* no extra fields */
-          } else if (target === "subnet") body.subnet_id = targetId;
-          else if (target === "host") body.host_id = targetId;
-          else if (target === "port") body.port_id = targetId;
-          else body.evidence_id = targetId;
           const res = await fetch(apiUrl("/api/notes"), {
             method: "POST",
             credentials: "include",
@@ -1223,20 +1401,30 @@ export default function MissionDetailPage() {
           });
           if (!res.ok) throw new Error("Failed to create note");
           const created = await res.json();
-          const newNote: Note = { ...created, title: title || null, attachments: newAttachments, created_by: "You", updated_by: "You" };
+          const newNote: Note = {
+            ...created,
+            target_type: created.target_type ?? target,
+            target_id: created.target_id ?? (target === "scope" || target === "vulnerabilities" ? null : targetId),
+            title: title || null,
+            attachments: newAttachments,
+            created_by: "You",
+            updated_by: "You",
+          };
+          setProjectNotes((prev) => [newNote, ...prev]);
+          setNotesVersion((v) => v + 1);
           if (target === "scope") {
             setScopeNotes((prev) => [newNote, ...prev]);
             setScopeNotesLoaded(true);
           } else if (target === "subnet") {
             setNotesBySubnet((prev) => ({ ...prev, [targetId]: [newNote, ...(prev[targetId] ?? [])] }));
             setNotesBySubnetLoaded((p) => new Set(p).add(targetId));
-          } else if (target === "host") {
+          } else if (target === "host" || target === "host_ports") {
             setNotesByHost((prev) => ({ ...prev, [targetId]: [newNote, ...(prev[targetId] ?? [])] }));
             setNotesLoaded((p) => new Set(p).add(targetId));
           } else if (target === "port") {
             setNotesByPort((prev) => ({ ...prev, [targetId]: [newNote, ...(prev[targetId] ?? [])] }));
             setNotesByPortLoaded((p) => new Set(p).add(targetId));
-          } else {
+          } else if (target === "evidence") {
             setNotesByEvidence((prev) => ({ ...prev, [targetId]: [newNote, ...(prev[targetId] ?? [])] }));
             setNotesByEvidenceLoaded((p) => new Set(p).add(targetId));
           }
@@ -1254,11 +1442,13 @@ export default function MissionDetailPage() {
     try {
       const res = await fetch(apiUrl(`/api/notes/${note.id}`), { method: "DELETE", credentials: "include" });
       if (!res.ok) throw new Error("Failed to delete note");
+      setProjectNotes((prev) => prev.filter((n) => n.id !== note.id));
+      setNotesVersion((v) => v + 1);
       if (target === "scope") setScopeNotes((prev) => prev.filter((n) => n.id !== note.id));
       else if (target === "subnet") setNotesBySubnet((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).filter((n) => n.id !== note.id) }));
-      else if (target === "host") setNotesByHost((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).filter((n) => n.id !== note.id) }));
+      else if (target === "host" || target === "host_ports") setNotesByHost((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).filter((n) => n.id !== note.id) }));
       else if (target === "port") setNotesByPort((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).filter((n) => n.id !== note.id) }));
-      else setNotesByEvidence((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).filter((n) => n.id !== note.id) }));
+      else if (target === "evidence") setNotesByEvidence((prev) => ({ ...prev, [targetId]: (prev[targetId] ?? []).filter((n) => n.id !== note.id) }));
       setDeleteNoteModal(null);
       setSelectedNode(null);
       setToast("Note deleted");
@@ -1623,8 +1813,27 @@ export default function MissionDetailPage() {
   };
 
   const expandHostAndLoad = (hostId: string) => {
-    loadPortsForHost(hostId);
+    loadPortsForHost(hostId, mission?.sort_mode || "cidr_asc");
     loadVulnsForHost(hostId);
+  };
+
+  const handleSortModeChange = (newMode: string) => {
+    if (!missionId || newMode === (mission?.sort_mode || "cidr_asc")) return;
+    fetch(apiUrl(`/api/projects/${missionId}/sort-mode`), {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sort_mode: newMode }),
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error("Failed to update sort");
+        return r.json();
+      })
+      .then((proj) => {
+        setMission(proj);
+        loadData();
+      })
+      .catch((e) => setToast(e instanceof Error ? e.message : "Failed to update sort"));
   };
 
   useEffect(() => {
@@ -1727,6 +1936,7 @@ export default function MissionDetailPage() {
                 { label: "Add Port", onClick: () => setPortModal({ mode: "add", host: h }) },
                 { label: "Add Vulnerability", onClick: () => setVulnModal({ mode: "add", host: h }) },
                 { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "host", host: h }) },
+                { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "host", parentId: h.id, contextLabel: hostLabel(h) }) },
                 { label: "Rename", onClick: () => setRenameHostModal(h) },
                 { label: "Delete", onClick: () => setDeleteHostModal(h) },
               ],
@@ -1740,10 +1950,7 @@ export default function MissionDetailPage() {
         </div>
         {hExp && (
           <>
-            {(() => {
-              if (!notesLoaded.has(h.id) && !notesLoading.has(h.id)) loadNotesForHost(h.id);
-              if (notesLoading.has(h.id)) return <div key={`host-notes-load-${h.id}`} className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 1), color: "var(--text-muted)" }}>Loading notes…</div>;
-              return (notesByHost[h.id] ?? []).map((n) => {
+            {projectNotes.filter((n) => n.target_type === "host" && n.target_id === h.id).map((n) => {
                 const isSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "host";
                 const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
                 return (
@@ -1770,14 +1977,27 @@ export default function MissionDetailPage() {
                     <span style={{ fontStyle: "italic" }}>{noteTitle}{noteTitle.length >= 40 ? "…" : ""}</span>
                   </div>
                 );
-              });
-            })()}
+              })}
+            {projectTodos.filter((t) => t.target_type === "host" && t.target_id === h.id).map((t) => {
+              const isSel = selectedNode?.type === "todo" && selectedNode.id === t.id;
+              return (
+                <div
+                  key={t.id}
+                  className={"theme-tree-node" + (isSel ? " selected" : "")}
+                  style={{ ...nodeStyle(baseDepth + 1), color: "var(--text-muted)", textDecoration: t.status === "done" ? "line-through" : undefined }}
+                  onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "todo", id: t.id }); }}
+                >
+                  <span style={{ width: 14 }}>•</span>
+                  {t.title}
+                </div>
+              );
+            })}
             <div
               className={"theme-tree-node" + (selectedNode?.type === "host-ports" && selectedNode.hostId === h.id ? " selected" : "")}
               style={nodeStyle(baseDepth + 1)}
               onClick={(ev) => {
                 ev.stopPropagation();
-                toggleExpand(portsKey, () => loadPortsForHost(h.id));
+                toggleExpand(portsKey, () => loadPortsForHost(h.id, mission?.sort_mode || "cidr_asc"));
                 setSelectedNode({ type: "host-ports", hostId: h.id });
               }}
               onContextMenu={(ev) => {
@@ -1789,6 +2009,8 @@ export default function MissionDetailPage() {
                   items: [
                     { label: "Expand/Collapse", onClick: () => toggleExpandCollapse(portsKey) },
                     { label: "Add Port", onClick: () => setPortModal({ mode: "add", host: h }) },
+                    { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "host_ports", host: h }) },
+                    { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "host_ports", parentId: h.id, contextLabel: `Ports on ${hostLabel(h)}` }) },
                   ],
                 });
               }}
@@ -1801,6 +2023,48 @@ export default function MissionDetailPage() {
             </div>
             {portsExp && (
               <>
+                {projectNotes.filter((n) => n.target_type === "host_ports" && n.target_id === h.id).map((n) => {
+                  const isNoteSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "host_ports";
+                  const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
+                  return (
+                    <div
+                      key={n.id}
+                      className={"theme-tree-node" + (isNoteSel ? " selected" : "")}
+                      style={{ ...nodeStyle(baseDepth + 2), color: "var(--text-muted)" }}
+                      onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "note", id: n.id, target: "host_ports", targetId: h.id }); }}
+                      onContextMenu={(ev) => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        setContextMenu({
+                          x: ev.clientX,
+                          y: ev.clientY,
+                          items: [
+                            { label: "Edit", onClick: () => setNoteModal({ mode: "edit", target: "host_ports", host: h, note: n }) },
+                            { label: "Delete", onClick: () => setDeleteNoteModal({ note: n, target: "host_ports", host: h }) },
+                            { label: "Print Note", onClick: () => setNotePrintView({ note: n, target: "host_ports", host: h }) },
+                          ],
+                        });
+                      }}
+                    >
+                      <span style={{ width: 14 }}>≡</span>
+                      <span style={{ fontStyle: "italic" }}>{noteTitle}{noteTitle.length >= 40 ? "…" : ""}</span>
+                    </div>
+                  );
+                })}
+                {projectTodos.filter((t) => t.target_type === "host_ports" && t.target_id === h.id).map((t) => {
+                  const isSel = selectedNode?.type === "todo" && selectedNode.id === t.id;
+                  return (
+                    <div
+                      key={t.id}
+                      className={"theme-tree-node" + (isSel ? " selected" : "")}
+                      style={{ ...nodeStyle(baseDepth + 2), color: "var(--text-muted)", textDecoration: t.status === "done" ? "line-through" : undefined }}
+                      onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "todo", id: t.id }); }}
+                    >
+                      <span style={{ width: 14 }}>•</span>
+                      {t.title}
+                    </div>
+                  );
+                })}
                 {portsLoad ? (
                   <div className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 2), color: "var(--text-muted)" }}>Loading…</div>
                 ) : (
@@ -1833,6 +2097,7 @@ export default function MissionDetailPage() {
                               items: [
                                 { label: "Edit Port", onClick: () => setPortModal({ mode: "edit", host: h, port: p }) },
                                 { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "port", port: p, host: h }) },
+                                { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "port", parentId: p.id, contextLabel: `${p.number}/${p.protocol} on ${hostLabel(h)}` }) },
                                 { label: "Delete Port", onClick: () => setDeletePortModal({ port: p, host: h }) },
                               ],
                             });
@@ -1845,10 +2110,7 @@ export default function MissionDetailPage() {
                         </div>
                         {portEvExp && (
                           <>
-                            {(() => {
-                              if (!notesByPortLoaded.has(p.id) && !notesByPortLoading.has(p.id)) loadNotesForPort(p.id);
-                              if (notesByPortLoading.has(p.id)) return <div key={`port-notes-load-${p.id}`} className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 3), color: "var(--text-muted)" }}>Loading notes…</div>;
-                              return (notesByPort[p.id] ?? []).map((n) => {
+                            {projectNotes.filter((n) => n.target_type === "port" && n.target_id === p.id).map((n) => {
                                 const isNoteSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "port";
                                 const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
                                 return (
@@ -1875,8 +2137,21 @@ export default function MissionDetailPage() {
                                     <span style={{ fontStyle: "italic" }}>{noteTitle}{noteTitle.length >= 40 ? "…" : ""}</span>
                                   </div>
                                 );
-                              });
-                            })()}
+                              })}
+                            {projectTodos.filter((t) => t.target_type === "port" && t.target_id === p.id).map((t) => {
+                              const isTodoSel = selectedNode?.type === "todo" && selectedNode.id === t.id;
+                              return (
+                                <div
+                                  key={t.id}
+                                  className={"theme-tree-node" + (isTodoSel ? " selected" : "")}
+                                  style={{ ...nodeStyle(baseDepth + 3), color: "var(--text-muted)", textDecoration: t.status === "done" ? "line-through" : undefined }}
+                                  onClick={(evt) => { evt.stopPropagation(); setSelectedNode({ type: "todo", id: t.id }); }}
+                                >
+                                  <span style={{ width: 14 }}>•</span>
+                                  {t.title}
+                                </div>
+                              );
+                            })}
                             {evLoad ? (
                               <div className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 3), color: "var(--text-muted)" }}>Loading…</div>
                             ) : evList.length === 0 ? (
@@ -1911,10 +2186,7 @@ export default function MissionDetailPage() {
                                       <span style={{ fontSize: 13 }}>{label}</span>
                                     </div>
                                     {/* Evidence notes as child nodes */}
-                                    {(() => {
-                                      if (!notesByEvidenceLoaded.has(ev.id) && !notesByEvidenceLoading.has(ev.id)) loadNotesForEvidence(ev.id);
-                                      if (notesByEvidenceLoading.has(ev.id)) return <div key={`ev-notes-load-${ev.id}`} className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 4), color: "var(--text-muted)" }}>Loading…</div>;
-                                      return (notesByEvidence[ev.id] ?? []).map((n) => {
+                                    {projectNotes.filter((n) => n.target_type === "evidence" && n.target_id === ev.id).map((n) => {
                                         const isNoteSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "evidence";
                                         const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
                                         return (
@@ -1941,8 +2213,7 @@ export default function MissionDetailPage() {
                                             <span style={{ fontStyle: "italic" }}>{noteTitle}{noteTitle.length >= 40 ? "…" : ""}</span>
                                           </div>
                                         );
-                                      });
-                                    })()}
+                                      })}
                                   </div>
                                 );
                               })
@@ -2040,9 +2311,15 @@ export default function MissionDetailPage() {
               ? `Port: ${noteModal.port.number}/${noteModal.port.protocol} on ${hostLabel(noteModal.host)}`
               : noteModal.target === "evidence" && noteModal.evidence
                 ? `Report: ${noteModal.evidence.caption || noteModal.evidence.filename}`
-                : noteModal.host
-                  ? `Host: ${hostLabel(noteModal.host)}`
-                  : "";
+                : noteModal.target === "host_ports" && noteModal.host
+                  ? `Ports on ${hostLabel(noteModal.host)}`
+                  : noteModal.target === "vulnerabilities"
+                    ? "Vulnerabilities"
+                    : noteModal.target === "vulnerability_definition" && noteModal.definition
+                      ? `Vulnerability: ${noteModal.definition.title}`
+                      : noteModal.host
+                        ? `Host: ${hostLabel(noteModal.host)}`
+                        : "";
       const targetId =
         noteModal.target === "scope"
           ? missionId
@@ -2052,7 +2329,13 @@ export default function MissionDetailPage() {
               ? noteModal.port!.id
               : noteModal.target === "evidence"
                 ? noteModal.evidence!.id
-                : noteModal.host!.id;
+                : noteModal.target === "host_ports" && noteModal.host
+                  ? noteModal.host.id
+                  : noteModal.target === "vulnerabilities"
+                    ? ""
+                    : noteModal.target === "vulnerability_definition" && noteModal.definition
+                      ? noteModal.definition.id
+                      : noteModal.host!.id;
       return (
         <NoteEditorPanel
           contextLabel={contextLabel}
@@ -2184,14 +2467,109 @@ export default function MissionDetailPage() {
     }
     if (selectedNode.type === "unresolved")
       return <div style={{ padding: 24, color: "var(--text-muted)" }}>Hosts with DNS but unresolved IP. Expand to see hosts.</div>;
-    if (selectedNode.type === "evidence")
+    if (selectedNode.type === "custom-reports")
+      return <CustomReportsPanel projectId={missionId} subnets={subnets} onToast={setToast} savedReports={savedReports} onSavedReportsChange={loadSavedReports} />;
+    if (selectedNode.type === "saved-report") {
+      const sr = savedReports.find((r) => r.id === selectedNode.id);
+      if (!sr) return <div style={{ padding: 24, color: "var(--text-muted)" }}>Saved report not found.</div>;
       return (
-        <div style={{ padding: 24, color: "var(--text-muted)" }}>
-          <p>Select &quot;Custom Reports&quot; from the tree to build and export query-based reports.</p>
+        <SavedReportRunView
+          projectId={missionId}
+          report={sr}
+          onToast={setToast}
+        />
+      );
+    }
+    if (selectedNode.type === "todos")
+      return (
+        <TodosPanel
+          projectId={missionId}
+          onToast={setToast}
+          refreshTrigger={todosVersion}
+          subnets={subnets}
+          hosts={hosts}
+          portsByHost={portsByHost}
+          users={users}
+          onFocusNode={(node) => {
+            setExpanded((prev) => {
+              const next = new Set(prev);
+              next.add("scope");
+              if (node.type === "subnet") next.add(`subnet:${node.id}`);
+              if (node.type === "host") {
+                const h = hosts.find((x) => x.id === node.id);
+                if (h?.subnet_id) next.add(`subnet:${h.subnet_id}`);
+                next.add(`host:${node.id}`);
+                next.add(`host-ports:${node.id}`);
+              }
+              if (node.type === "port") {
+                const port = Object.entries(portsByHost).flatMap(([hid, list]) => list.map((p) => ({ hostId: hid, port: p }))).find((x) => x.port.id === node.id);
+                if (port) {
+                  const h = hosts.find((x) => x.id === port.hostId);
+                  if (h?.subnet_id) next.add(`subnet:${h.subnet_id}`);
+                  next.add(`host:${port.hostId}`);
+                  next.add(`host-ports:${port.hostId}`);
+                }
+              }
+              return next;
+            });
+            setSelectedNode(node.type === "subnet" ? { type: "subnet", id: node.id } : node.type === "host" ? { type: "host", id: node.id } : { type: "port", id: node.id });
+          }}
+        />
+      );
+    if (selectedNode.type === "todo") {
+      const todo = projectTodos.find((t) => t.id === selectedNode.id);
+      if (!todo) return <div style={{ padding: 24, color: "var(--text-muted)" }}>Todo not found.</div>;
+      const patchTodo = (updates: { status?: string; assigned_to_user_id?: string | null }) => {
+        fetch(apiUrl(`/api/todos/${todo.id}`), {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        })
+          .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Update failed"))))
+          .then((t: ProjectTodo) => {
+            setProjectTodos((prev) => prev.map((x) => (x.id === t.id ? t : x)));
+            setToast(updates.status ? (updates.status === "done" ? "Marked done" : "Reopened") : "Assignee updated");
+          })
+          .catch(() => setToast("Update failed"));
+      };
+      const deleteTodo = () => {
+        fetch(apiUrl(`/api/todos/${todo.id}`), { method: "DELETE", credentials: "include" })
+          .then((r) => {
+            if (!r.ok) throw new Error("Delete failed");
+            setProjectTodos((prev) => prev.filter((t) => t.id !== todo.id));
+            setSelectedNode(null);
+            setToast("Todo deleted");
+          })
+          .catch(() => setToast("Delete failed"));
+      };
+      return (
+        <div style={{ padding: 24 }}>
+          <h2 style={{ margin: "0 0 8px", fontSize: "1.25rem", textDecoration: todo.status === "done" ? "line-through" : undefined }}>{todo.title}</h2>
+          {todo.description && <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>{todo.description}</p>}
+          <div style={{ marginBottom: 16, fontSize: 14, color: "var(--text-muted)" }}>
+            <label style={{ display: "block", marginBottom: 4 }}>Assign to</label>
+            <select
+              className="theme-select"
+              value={todo.assigned_to_user_id ?? ""}
+              onChange={(e) => patchTodo({ assigned_to_user_id: e.target.value || null })}
+              style={{ maxWidth: 240 }}
+            >
+              <option value="">— Unassigned —</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.username}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" className="theme-btn theme-btn-primary" onClick={() => patchTodo({ status: todo.status === "done" ? "open" : "done" })}>
+              {todo.status === "done" ? "Reopen" : "Mark done"}
+            </button>
+            <button type="button" className="theme-btn theme-btn-ghost" style={{ color: "var(--error)" }} onClick={deleteTodo}>Delete</button>
+          </div>
         </div>
       );
-    if (selectedNode.type === "custom-reports")
-      return <CustomReportsPanel projectId={missionId} subnets={subnets} onToast={setToast} />;
+    }
     if (selectedNode.type === "jobs")
       return <div style={{ padding: 24, color: "var(--text-muted)" }}>Jobs (coming soon)</div>;
 
@@ -2308,16 +2686,7 @@ export default function MissionDetailPage() {
     }
 
     if (selectedNode.type === "note") {
-      const note =
-        selectedNode.target === "scope"
-          ? scopeNotes.find((n) => n.id === selectedNode.id)
-          : selectedNode.target === "subnet"
-            ? (notesBySubnet[selectedNode.targetId] ?? []).find((n) => n.id === selectedNode.id)
-            : selectedNode.target === "port"
-              ? (notesByPort[selectedNode.targetId] ?? []).find((n) => n.id === selectedNode.id)
-              : selectedNode.target === "evidence"
-                ? (notesByEvidence[selectedNode.targetId] ?? []).find((n) => n.id === selectedNode.id)
-                : (notesByHost[selectedNode.targetId] ?? []).find((n) => n.id === selectedNode.id);
+      const note = projectNotes.find((n) => n.id === selectedNode.id);
       if (!note) return <div style={{ padding: 24, color: "var(--text-muted)" }}>Note not found.</div>;
       const contextLabel =
         selectedNode.target === "scope"
@@ -2338,10 +2707,22 @@ export default function MissionDetailPage() {
                     const ev = Object.values(evidenceByPort).flat().find((e) => e.id === selectedNode.targetId);
                     return ev ? `Report: ${ev.caption || ev.filename}` : "Report";
                   })()
-                : (() => {
-                    const h = hosts.find((x) => x.id === selectedNode.targetId);
-                    return h ? `Host: ${hostLabel(h)}` : "Host";
-                  })();
+                : selectedNode.target === "host_ports"
+                  ? (() => {
+                      const h = hosts.find((x) => x.id === selectedNode.targetId);
+                      return h ? `Ports on ${hostLabel(h)}` : "Ports";
+                    })()
+                  : selectedNode.target === "vulnerabilities"
+                    ? "Vulnerabilities"
+                    : selectedNode.target === "vulnerability_definition"
+                      ? (() => {
+                          const d = vulnDefinitions.find((x) => x.id === selectedNode.targetId);
+                          return d ? `Vulnerability: ${d.title}` : "Vulnerability";
+                        })()
+                      : (() => {
+                          const h = hosts.find((x) => x.id === selectedNode.targetId);
+                          return h ? `Host: ${hostLabel(h)}` : "Host";
+                        })();
       const noteLock = getLockForRecord("note", note.id);
       return (
         <div style={{ padding: 24 }}>
@@ -2510,8 +2891,7 @@ export default function MissionDetailPage() {
                 <h3 style={{ fontSize: "1rem", marginBottom: 12 }}>Reports</h3>
                 <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                   {metadataItems.map((ev) => {
-                    if (!notesByEvidenceLoaded.has(ev.id) && !notesByEvidenceLoading.has(ev.id)) loadNotesForEvidence(ev.id);
-                    const evNotes = notesByEvidence[ev.id] ?? [];
+                    const evNotes = projectNotes.filter((n) => n.target_type === "evidence" && n.target_id === ev.id);
                     return (
                       <div key={ev.id} style={{ padding: "8px 12px", backgroundColor: "var(--bg-panel)", borderRadius: 8, border: "1px solid var(--border)" }}>
                         <span style={{ fontSize: 14, fontWeight: 500 }}>{ev.caption || ev.filename}</span>
@@ -2541,8 +2921,7 @@ export default function MissionDetailPage() {
                     );
                   })}
                   {screenshots.map((ev) => {
-                    if (!notesByEvidenceLoaded.has(ev.id) && !notesByEvidenceLoading.has(ev.id)) loadNotesForEvidence(ev.id);
-                    const evNotes = notesByEvidence[ev.id] ?? [];
+                    const evNotes = projectNotes.filter((n) => n.target_type === "evidence" && n.target_id === ev.id);
                     return (
                       <div key={ev.id}>
                         <a
@@ -2618,6 +2997,22 @@ export default function MissionDetailPage() {
       <div ref={containerRef} style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         <aside style={treeStyle}>
           <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)", marginBottom: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+              <span style={{ color: "var(--text-muted)", fontSize: 12, whiteSpace: "nowrap" }}>Sort:</span>
+              <select
+                className="theme-select"
+                value={mission?.sort_mode ?? "cidr_asc"}
+                onChange={(e) => handleSortModeChange(e.target.value)}
+                style={{ flex: 1, minWidth: 0, fontSize: 12, padding: "4px 8px" }}
+                title="Tree sort order"
+              >
+                <option value="cidr_asc">CIDR ↑</option>
+                <option value="cidr_desc">CIDR ↓</option>
+                <option value="alpha_asc">Name ↑</option>
+                <option value="alpha_desc">Name ↓</option>
+                <option value="last_seen_desc">Last seen ↓</option>
+              </select>
+            </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, backgroundColor: "var(--bg-panel)", borderRadius: 6, border: "1px solid var(--border)", padding: "4px 8px" }}>
               <span style={{ color: "var(--text-muted)", fontSize: 14 }} title="Filter">{filterActive ? "🔽" : "▸"}</span>
               <input
@@ -2669,6 +3064,7 @@ export default function MissionDetailPage() {
                   { label: "Expand/Collapse", onClick: () => toggleExpandCollapse("scope") },
                   { label: "Add Subnet", onClick: () => setAddSubnetModal(true) },
                   { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "scope" }) },
+                  { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "scope", contextLabel: "Scope" }) },
                   { label: "Import Hosts/Scan Results", onClick: () => setImportHostsModal({ type: "scope" }) },
                 ],
               });
@@ -2679,10 +3075,7 @@ export default function MissionDetailPage() {
           </div>
           {expanded.has("scope") && (
             <>
-              {(() => {
-                if (!scopeNotesLoaded && !scopeNotesLoading) loadScopeNotes();
-                if (scopeNotesLoading) return <div key="scope-notes-loading" className="theme-tree-node" style={{ ...nodeStyle(1), color: "var(--text-muted)" }}>Loading notes…</div>;
-                return scopeNotes.map((n) => {
+              {projectNotes.filter((n) => n.target_type === "scope").map((n) => {
                   const isSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "scope";
                   const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
                   return (
@@ -2709,6 +3102,22 @@ export default function MissionDetailPage() {
                       <span style={{ fontStyle: "italic" }}>{noteTitle}{noteTitle.length >= 40 ? "…" : ""}</span>
                     </div>
                   );
+                })}
+              {(() => {
+                const scopeTodos = projectTodos.filter((t) => t.target_type === "scope");
+                return scopeTodos.map((t) => {
+                  const isSel = selectedNode?.type === "todo" && selectedNode.id === t.id;
+                  return (
+                    <div
+                      key={t.id}
+                      className={"theme-tree-node" + (isSel ? " selected" : "")}
+                      style={{ ...nodeStyle(1), color: "var(--text-muted)", textDecoration: t.status === "done" ? "line-through" : undefined }}
+                      onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "todo", id: t.id }); }}
+                    >
+                      <span style={{ width: 14 }}>•</span>
+                      {t.title}
+                    </div>
+                  );
                 });
               })()}
               {subnets.filter((s) => !filterActive || matchingSubnetIds.has(s.id)).map((s) => {
@@ -2733,6 +3142,7 @@ export default function MissionDetailPage() {
                             { label: "Expand/Collapse", onClick: () => toggleExpandCollapse(key) },
                             { label: "Add Host", onClick: () => setAddHostModal({ subnetId: s.id }) },
                             { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "subnet", subnet: s }) },
+                            { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "subnet", parentId: s.id, contextLabel: `Subnet ${s.cidr}${s.name ? ` (${s.name})` : ""}` }) },
                             { label: "Import Hosts", onClick: () => setImportHostsModal({ type: "subnet", id: s.id, cidr: s.cidr, name: s.name }) },
                             { label: "Rename", onClick: () => setRenameSubnetModal(s) },
                             { label: "Delete", onClick: () => setDeleteSubnetModal(s) },
@@ -2747,10 +3157,7 @@ export default function MissionDetailPage() {
                     </div>
                     {isExp && (
                       <>
-                        {(() => {
-                          if (!notesBySubnetLoaded.has(s.id) && !notesBySubnetLoading.has(s.id)) loadNotesForSubnet(s.id);
-                          if (notesBySubnetLoading.has(s.id)) return <div key={`subnet-notes-${s.id}`} className="theme-tree-node" style={{ ...nodeStyle(2), color: "var(--text-muted)" }}>Loading notes…</div>;
-                          return (notesBySubnet[s.id] ?? []).map((n) => {
+                        {projectNotes.filter((n) => n.target_type === "subnet" && n.target_id === s.id).map((n) => {
                             const isNoteSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "subnet" && selectedNode.targetId === s.id;
                             const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
                             return (
@@ -2777,8 +3184,21 @@ export default function MissionDetailPage() {
                                 <span style={{ fontStyle: "italic" }}>{noteTitle}{noteTitle.length >= 40 ? "…" : ""}</span>
                               </div>
                             );
-                          });
-                        })()}
+                          })}
+                        {projectTodos.filter((t) => t.target_type === "subnet" && t.target_id === s.id).map((t) => {
+                          const isSel = selectedNode?.type === "todo" && selectedNode.id === t.id;
+                          return (
+                            <div
+                              key={t.id}
+                              className={"theme-tree-node" + (isSel ? " selected" : "")}
+                              style={{ ...nodeStyle(2), color: "var(--text-muted)", textDecoration: t.status === "done" ? "line-through" : undefined }}
+                              onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "todo", id: t.id }); }}
+                            >
+                              <span style={{ width: 14 }}>•</span>
+                              {t.title}
+                            </div>
+                          );
+                        })}
                         {subnetHosts.map((h) => renderTreeHost(h, 2))}
                       </>
                     )}
@@ -2842,18 +3262,61 @@ export default function MissionDetailPage() {
                 items: [
                   { label: "Expand/Collapse", onClick: () => toggleExpandCollapse("vulnerabilities") },
                   { label: "Add Vulnerability", onClick: () => setVulnModal({ mode: "add" }) },
+                  { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "vulnerabilities" }) },
+                  { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "vulnerabilities", contextLabel: "Vulnerabilities" }) },
                 ],
               });
             }}
           >
             <span style={{ width: 14 }}>{expanded.has("vulnerabilities") ? "▼" : "▶"}</span>
-            <span style={{ opacity: 0.8 }}>{ICON.vulns}</span>
             Vulnerabilities
             {vulnDefinitionsLoading && <Spinner />}
             {vulnDefinitionsLoaded && !vulnDefinitionsLoading && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({vulnDefinitions.length})</span>}
           </div>
           {expanded.has("vulnerabilities") && (
             <>
+              {projectNotes.filter((n) => n.target_type === "vulnerabilities").map((n) => {
+                const isNoteSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "vulnerabilities";
+                const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
+                return (
+                  <div
+                    key={n.id}
+                    className={"theme-tree-node" + (isNoteSel ? " selected" : "")}
+                    style={{ ...nodeStyle(1), color: "var(--text-muted)" }}
+                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "note", id: n.id, target: "vulnerabilities", targetId: "" }); }}
+                    onContextMenu={(ev) => {
+                      ev.preventDefault();
+                      ev.stopPropagation();
+                      setContextMenu({
+                        x: ev.clientX,
+                        y: ev.clientY,
+                        items: [
+                          { label: "Edit", onClick: () => setNoteModal({ mode: "edit", target: "vulnerabilities", note: n }) },
+                          { label: "Delete", onClick: () => setDeleteNoteModal({ note: n, target: "vulnerabilities" }) },
+                          { label: "Print Note", onClick: () => setNotePrintView({ note: n, target: "vulnerabilities" }) },
+                        ],
+                      });
+                    }}
+                  >
+                    <span style={{ width: 14 }}>≡</span>
+                    <span style={{ fontStyle: "italic" }}>{noteTitle}{noteTitle.length >= 40 ? "…" : ""}</span>
+                  </div>
+                );
+              })}
+              {projectTodos.filter((t) => t.target_type === "vulnerabilities").map((t) => {
+                const isSel = selectedNode?.type === "todo" && selectedNode.id === t.id;
+                return (
+                  <div
+                    key={t.id}
+                    className={"theme-tree-node" + (isSel ? " selected" : "")}
+                    style={{ ...nodeStyle(1), color: "var(--text-muted)", textDecoration: t.status === "done" ? "line-through" : undefined }}
+                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "todo", id: t.id }); }}
+                  >
+                    <span style={{ width: 14 }}>•</span>
+                    {t.title}
+                  </div>
+                );
+              })}
               {vulnDefinitionsLoading ? (
                 <div className="theme-tree-node" style={{ ...nodeStyle(1), color: "var(--text-muted)" }}>Loading…</div>
               ) : vulnDefinitions.length === 0 ? (
@@ -2863,29 +3326,73 @@ export default function MissionDetailPage() {
                   const isSel = selectedNode?.type === "vuln-definition" && selectedNode.id === d.id;
                   const effSev = getEffectiveSeverity({ definition_severity: d.severity, definition_cvss_score: d.cvss_score });
                   return (
-                    <div
-                      key={d.id}
-                      className={"theme-tree-node" + (isSel ? " selected" : "")}
-                      style={{ ...nodeStyle(1), color: getSeverityColor(effSev) }}
-                      onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "vuln-definition", id: d.id }); }}
-                      onContextMenu={(ev) => {
-                        ev.preventDefault();
-                        ev.stopPropagation();
-                        const firstInstance = Object.values(vulnsByHost).flat().find((v) => v.vulnerability_definition_id === d.id);
-                        const editHost = hosts.find((x) => d.affected_host_ids?.includes(x.id));
-                        setContextMenu({
-                          x: ev.clientX,
-                          y: ev.clientY,
-                          items: [
-                            { label: "Edit", onClick: () => setVulnModal({ mode: "edit", host: editHost ?? undefined, definition: d }) },
-                            { label: "Delete", onClick: () => setDeleteVulnModal({ instance: { id: "", host_id: d.affected_host_ids?.[0] ?? "", vulnerability_definition_id: d.id, definition_title: d.title, definition_severity: d.severity, definition_cvss_score: d.cvss_score, definition_cve_ids: d.cve_ids ?? [], definition_description_md: d.description_md, definition_evidence_md: d.evidence_md, definition_discovered_by: d.discovered_by, port_id: null, status: "open" } }) },
-                          ],
-                        });
-                      }}
-                    >
-                      <span style={{ width: 14 }}>•</span>
-                      {d.title}
-                      <AffectedHostBadge count={d.affected_host_ids.length} onClick={() => setManageAffectedHostsModal(d)} compact />
+                    <div key={d.id}>
+                      <div
+                        className={"theme-tree-node" + (isSel ? " selected" : "")}
+                        style={{ ...nodeStyle(1), color: getSeverityColor(effSev) }}
+                        onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "vuln-definition", id: d.id }); }}
+                        onContextMenu={(ev) => {
+                          ev.preventDefault();
+                          ev.stopPropagation();
+                          const editHost = hosts.find((x) => d.affected_host_ids?.includes(x.id));
+                          setContextMenu({
+                            x: ev.clientX,
+                            y: ev.clientY,
+                            items: [
+                              { label: "Edit", onClick: () => setVulnModal({ mode: "edit", host: editHost ?? undefined, definition: d }) },
+                              { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "vulnerability_definition", definition: d }) },
+                              { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "vulnerability_definition", parentId: d.id, contextLabel: `Vulnerability: ${d.title}` }) },
+                              { label: "Delete", onClick: () => setDeleteVulnModal({ instance: { id: "", host_id: d.affected_host_ids?.[0] ?? "", vulnerability_definition_id: d.id, definition_title: d.title, definition_severity: d.severity, definition_cvss_score: d.cvss_score, definition_cve_ids: d.cve_ids ?? [], definition_description_md: d.description_md, definition_evidence_md: d.evidence_md, definition_discovered_by: d.discovered_by, port_id: null, status: "open" } }) },
+                            ],
+                          });
+                        }}
+                      >
+                        <span style={{ width: 14 }}>•</span>
+                        {d.title}
+                        <AffectedHostBadge count={d.affected_host_ids.length} onClick={() => setManageAffectedHostsModal(d)} compact />
+                      </div>
+                      {projectNotes.filter((n) => n.target_type === "vulnerability_definition" && n.target_id === d.id).map((n) => {
+                        const isNoteSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "vulnerability_definition";
+                        const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
+                        return (
+                          <div
+                            key={n.id}
+                            className={"theme-tree-node" + (isNoteSel ? " selected" : "")}
+                            style={{ ...nodeStyle(2), color: "var(--text-muted)" }}
+                            onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "note", id: n.id, target: "vulnerability_definition", targetId: d.id }); }}
+                            onContextMenu={(ev) => {
+                              ev.preventDefault();
+                              ev.stopPropagation();
+                              setContextMenu({
+                                x: ev.clientX,
+                                y: ev.clientY,
+                                items: [
+                                  { label: "Edit", onClick: () => setNoteModal({ mode: "edit", target: "vulnerability_definition", definition: d, note: n }) },
+                                  { label: "Delete", onClick: () => setDeleteNoteModal({ note: n, target: "vulnerability_definition", definition: d }) },
+                                  { label: "Print Note", onClick: () => setNotePrintView({ note: n, target: "vulnerability_definition", definition: d }) },
+                                ],
+                              });
+                            }}
+                          >
+                            <span style={{ width: 14 }}>≡</span>
+                            <span style={{ fontStyle: "italic" }}>{noteTitle}{noteTitle.length >= 40 ? "…" : ""}</span>
+                          </div>
+                        );
+                      })}
+                      {projectTodos.filter((t) => t.target_type === "vulnerability_definition" && t.target_id === d.id).map((t) => {
+                        const isTodoSel = selectedNode?.type === "todo" && selectedNode.id === t.id;
+                        return (
+                          <div
+                            key={t.id}
+                            className={"theme-tree-node" + (isTodoSel ? " selected" : "")}
+                            style={{ ...nodeStyle(2), color: "var(--text-muted)", textDecoration: t.status === "done" ? "line-through" : undefined }}
+                            onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "todo", id: t.id }); }}
+                          >
+                            <span style={{ width: 14 }}>•</span>
+                            {t.title}
+                          </div>
+                        );
+                      })}
                     </div>
                   );
                 })
@@ -2893,12 +3400,12 @@ export default function MissionDetailPage() {
             </>
           )}
           <div
-            className={"theme-tree-node" + (selectedNode?.type === "evidence" ? " selected" : "")}
+            className={"theme-tree-node" + (selectedNode?.type === "custom-reports" ? " selected" : "")}
             style={{ ...nodeStyle(0), paddingLeft: 12 }}
             onClick={(ev) => {
               ev.stopPropagation();
-              toggleExpand("reports");
-              setSelectedNode({ type: "evidence" });
+              toggleExpand("custom-reports");
+              setSelectedNode({ type: "custom-reports" });
             }}
             onContextMenu={(e) => {
               e.preventDefault();
@@ -2906,23 +3413,61 @@ export default function MissionDetailPage() {
               setContextMenu({
                 x: e.clientX,
                 y: e.clientY,
-                items: [{ label: "Expand/Collapse", onClick: () => toggleExpandCollapse("reports") }],
+                items: [{ label: "Expand/Collapse", onClick: () => toggleExpandCollapse("custom-reports") }],
               });
             }}
           >
-            <span style={{ width: 14 }}>{expanded.has("reports") ? "▼" : "▶"}</span>
-            Reports
+            <span style={{ width: 14 }}>{expanded.has("custom-reports") ? "▼" : "▶"}</span>
+            Custom Reports
           </div>
-          {expanded.has("reports") && (
-            <div
-              className={"theme-tree-node" + (selectedNode?.type === "custom-reports" ? " selected" : "")}
-              style={{ ...nodeStyle(1), paddingLeft: 12 }}
-              onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "custom-reports" }); }}
-            >
-              <span style={{ width: 14 }}>▸</span>
-              Custom Reports
-            </div>
+          {expanded.has("custom-reports") && (
+            <>
+              {savedReports.map((sr) => {
+                const isSel = selectedNode?.type === "saved-report" && selectedNode.id === sr.id;
+                return (
+                  <div
+                    key={sr.id}
+                    className={"theme-tree-node" + (isSel ? " selected" : "")}
+                    style={{ ...nodeStyle(1), paddingLeft: 12, color: "var(--text-muted)" }}
+                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "saved-report", id: sr.id }); }}
+                  >
+                    <span style={{ width: 14 }}>▸</span>
+                    {sr.name}
+                  </div>
+                );
+              })}
+            </>
           )}
+          <div>
+            <div
+              className={"theme-tree-node" + (selectedNode?.type === "todos" ? " selected" : "")}
+              style={{ ...nodeStyle(0), paddingLeft: 12 }}
+              onClick={(ev) => {
+                ev.stopPropagation();
+                toggleExpand("todos-root");
+                setSelectedNode({ type: "todos" });
+              }}
+            >
+              <span style={{ width: 14 }}>{expanded.has("todos-root") ? "▼" : "▶"}</span>
+              Todos
+              {projectTodos.length > 0 && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({projectTodos.length})</span>}
+            </div>
+            {expanded.has("todos-root") &&
+              projectTodos.map((t) => {
+                const isSel = selectedNode?.type === "todo" && selectedNode.id === t.id;
+                return (
+                  <div
+                    key={t.id}
+                    className={"theme-tree-node" + (isSel ? " selected" : "")}
+                    style={{ ...nodeStyle(1), paddingLeft: 12, color: "var(--text-muted)", textDecoration: t.status === "done" ? "line-through" : undefined }}
+                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "todo", id: t.id }); }}
+                  >
+                    <span style={{ width: 14 }}>•</span>
+                    {t.title}
+                  </div>
+                );
+              })}
+          </div>
           <div className={"theme-tree-node" + (selectedNode?.type === "jobs" ? " selected" : "")} style={{ ...nodeStyle(0), paddingLeft: 12 }} onClick={() => setSelectedNode({ type: "jobs" })}>
             <span style={{ width: 14 }}>▶</span>
             Jobs
@@ -2954,6 +3499,53 @@ export default function MissionDetailPage() {
       </div>
 
       {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
+      {addTodoModal && (
+        <AddTodoModal
+          projectId={missionId}
+          parentType={addTodoModal.parentType}
+          parentId={addTodoModal.parentId ?? null}
+          contextLabel={addTodoModal.contextLabel}
+          users={users}
+          onClose={() => setAddTodoModal(null)}
+          onSaved={() => {
+            setTodosVersion((v) => v + 1);
+            const m = addTodoModal;
+            if (!m) return;
+            setExpanded((prev) => {
+              const next = new Set(prev);
+              next.add("todos-root");
+              next.add("scope");
+              if (m.parentType === "subnet" && m.parentId) {
+                next.add(`subnet:${m.parentId}`);
+              } else if (m.parentType === "host" && m.parentId) {
+                const h = hosts.find((x) => x.id === m.parentId);
+                if (h?.subnet_id) next.add(`subnet:${h.subnet_id}`);
+                next.add(`host:${m.parentId}`);
+              } else if (m.parentType === "host_ports" && m.parentId) {
+                const h = hosts.find((x) => x.id === m.parentId);
+                if (h?.subnet_id) next.add(`subnet:${h.subnet_id}`);
+                next.add(`host:${m.parentId}`);
+                next.add(`host-ports:${m.parentId}`);
+              } else if (m.parentType === "port" && m.parentId) {
+                const portEntry = Object.entries(portsByHost).flatMap(([hid, list]) => list.map((port) => ({ hostId: hid, port }))).find((x) => x.port.id === m.parentId);
+                if (portEntry) {
+                  const h = hosts.find((x) => x.id === portEntry.hostId);
+                  if (h?.subnet_id) next.add(`subnet:${h.subnet_id}`);
+                  next.add(`host:${portEntry.hostId}`);
+                  next.add(`host-ports:${portEntry.hostId}`);
+                  next.add(`port-evidence:${m.parentId}`);
+                }
+              } else if (m.parentType === "vulnerabilities") {
+                next.add("vulnerabilities");
+              } else if (m.parentType === "vulnerability_definition" && m.parentId) {
+                next.add("vulnerabilities");
+              }
+              return next;
+            });
+          }}
+          onToast={setToast}
+        />
+      )}
       {importHostsModal && (
         <ImportHostsModal
           projectId={missionId}
@@ -3170,7 +3762,13 @@ export default function MissionDetailPage() {
                           ? deleteNoteModal.port!.id
                           : deleteNoteModal.target === "evidence"
                             ? deleteNoteModal.evidence!.id
-                            : deleteNoteModal.host!.id
+                            : deleteNoteModal.target === "host_ports" && deleteNoteModal.host
+                              ? deleteNoteModal.host.id
+                              : deleteNoteModal.target === "vulnerabilities"
+                                ? ""
+                                : deleteNoteModal.target === "vulnerability_definition" && deleteNoteModal.definition
+                                  ? deleteNoteModal.definition.id
+                                  : deleteNoteModal.host!.id
                   )
                 }
               >

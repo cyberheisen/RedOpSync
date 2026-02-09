@@ -6,9 +6,18 @@ from sqlalchemy.orm import Session
 from app.core.admin_deps import require_admin
 from app.core.deps import get_current_user
 from app.db.session import get_db
-from app.models.models import Lock, Project, User
-from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead
-from app.schemas.report import ReportRunRequest, ReportRunResponse, ReportConfigSchema, ReportFiltersSchema, ReportBuilderRequest
+from app.models.models import Lock, Project, SavedReport, User
+from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectSortModeUpdate
+from app.schemas.report import (
+    ReportRunRequest,
+    ReportRunResponse,
+    ReportConfigSchema,
+    ReportFiltersSchema,
+    ReportBuilderRequest,
+    SavedReportCreate,
+    SavedReportRead,
+    SavedReportQueryDefinition,
+)
 from app.services.audit import log_audit
 from app.services.import_dispatcher import run_import
 from app.services.reports import run_report, list_report_configs, run_builder, BUILDER_COLUMNS, _builder_columns_json, ReportFilters
@@ -81,6 +90,23 @@ def update_project(
     data = body.model_dump(exclude_unset=True)
     for k, v in data.items():
         setattr(project, k, v)
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+@router.patch("/{project_id}/sort-mode", response_model=ProjectRead)
+def update_project_sort_mode(
+    project_id: UUID,
+    body: ProjectSortModeUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update project sort_mode (any user with project access)."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project.sort_mode = body.sort_mode
     db.commit()
     db.refresh(project)
     return project
@@ -188,6 +214,111 @@ def run_report_builder(
     return ReportRunResponse(
         report_type="builder",
         report_name="Report builder",
+        rows=rows,
+        count=len(rows),
+    )
+
+
+@router.get("/{project_id}/reports/saved", response_model=list[SavedReportRead])
+def list_saved_reports(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List saved report definitions for the project."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    reports = db.query(SavedReport).filter(SavedReport.project_id == project_id).order_by(SavedReport.created_at.desc()).all()
+    return [
+        SavedReportRead(
+            id=r.id,
+            project_id=r.project_id,
+            name=r.name,
+            description=r.description,
+            query_definition=SavedReportQueryDefinition(
+                data_source=r.data_source,
+                columns=r.columns or [],
+                filter_expression=r.filter_expression or "",
+            ),
+            created_at=r.created_at,
+        )
+        for r in reports
+    ]
+
+
+@router.post("/{project_id}/reports/saved", response_model=SavedReportRead, status_code=201)
+def create_saved_report(
+    project_id: UUID,
+    body: SavedReportCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Save a report definition."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    q = body.query_definition
+    if q.data_source not in ("hosts", "ports", "evidence", "vulns"):
+        raise HTTPException(status_code=400, detail="Invalid data_source")
+    sr = SavedReport(
+        project_id=project_id,
+        name=body.name,
+        description=body.description,
+        data_source=q.data_source,
+        columns=q.columns,
+        filter_expression=q.filter_expression or None,
+    )
+    db.add(sr)
+    db.commit()
+    db.refresh(sr)
+    return SavedReportRead(
+        id=sr.id,
+        project_id=sr.project_id,
+        name=sr.name,
+        description=sr.description,
+        query_definition=SavedReportQueryDefinition(
+            data_source=sr.data_source,
+            columns=sr.columns or [],
+            filter_expression=sr.filter_expression or "",
+        ),
+        created_at=sr.created_at,
+    )
+
+
+@router.post("/{project_id}/reports/saved/{report_id}/run", response_model=ReportRunResponse)
+def run_saved_report(
+    project_id: UUID,
+    report_id: UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Run a saved report and return tabular data (results not stored)."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    sr = db.query(SavedReport).filter(SavedReport.id == report_id, SavedReport.project_id == project_id).first()
+    if not sr:
+        raise HTTPException(status_code=404, detail="Saved report not found")
+    try:
+        rows = run_builder(db, project_id, sr.data_source, sr.columns or [], sr.filter_expression or "")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    log_audit(
+        db,
+        project_id=project_id,
+        user_id=current_user.id,
+        action_type="saved_report_run",
+        record_type="saved_report",
+        record_id=report_id,
+        after_json={"name": sr.name, "row_count": len(rows)},
+        ip_address=_get_client_ip(request),
+    )
+    db.commit()
+    return ReportRunResponse(
+        report_type="saved",
+        report_name=sr.name,
         rows=rows,
         count=len(rows),
     )

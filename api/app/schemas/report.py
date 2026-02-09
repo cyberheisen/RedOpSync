@@ -1,7 +1,37 @@
 """Schemas for custom reports."""
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+
+class SavedReportQueryDefinition(BaseModel):
+    """Stored report definition (data source, columns, filter)."""
+
+    data_source: str
+    columns: list[str]
+    filter_expression: str = ""
+
+
+class SavedReportCreate(BaseModel):
+    """Create a saved report."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    description: str | None = None
+    query_definition: SavedReportQueryDefinition
+
+
+class SavedReportRead(BaseModel):
+    """Saved report (list/detail)."""
+
+    id: UUID
+    project_id: UUID
+    name: str
+    description: str | None
+    query_definition: SavedReportQueryDefinition
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class ReportFiltersSchema(BaseModel):

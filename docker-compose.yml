@@ -59,6 +59,8 @@ services:
     build:
       context: ./agent
     env_file: .env
+    environment:
+      API_BASE_URL: http://api:8000
     depends_on:
       - api
     # Agent is intended to run on a separate host in real deployments.

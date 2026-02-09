@@ -74,3 +74,13 @@ def logout(response: Response):
 @router.get("/me", response_model=UserRead)
 def me(current_user: User = Depends(get_current_user)):
     return UserRead(id=current_user.id, username=current_user.username, role=_role_str(current_user.role))
+
+
+@router.get("/users", response_model=list[UserRead])
+def list_users(
+    db: DBSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List users (for assignee dropdowns). Any authenticated user can list."""
+    users = db.query(User).filter(User.disabled_at.is_(None)).order_by(User.username).all()
+    return [UserRead(id=u.id, username=u.username, role=_role_str(u.role)) for u in users]
