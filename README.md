@@ -90,6 +90,29 @@ This starts:
 - **API health:** [http://localhost:8000/health](http://localhost:8000/health)
 - **API docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
 
+### Troubleshooting: "Network error" on login
+
+If the app loads but login fails with a network error:
+
+1. **Use the right env file** — Copy the example env (the repo may use `.env.example` or `.env.sample`):
+   ```bash
+   cp .env.example .env
+   # or, if present:  cp .env.sample .env
+   ```
+
+2. **Open the app at localhost** — Use [http://localhost:3000](http://localhost:3000) (or [http://127.0.0.1:3000](http://127.0.0.1:3000)). If you use another hostname or IP, add it to `CORS_ORIGINS` in `.env` (e.g. `CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://your-host:3000`).
+
+3. **Check that the API is up** — In a terminal:
+   ```bash
+   curl http://localhost:8000/health
+   ```
+   You should see `{"status":"ok",...}`. If not, check API logs: `docker compose logs api`.
+
+4. **Restart after changing `.env`** — If you edited `.env` (e.g. CORS or API URL), restart so the API and web containers pick it up:
+   ```bash
+   docker compose down && docker compose up -d
+   ```
+
 ---
 
 ## Running without Docker (local dev)
