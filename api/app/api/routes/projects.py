@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 from app.core.admin_deps import require_admin
 from app.core.deps import get_current_user
 from app.db.session import get_db
-from app.models.models import Lock, Project, SavedReport, User
+from app.models.models import ItemTag, Lock, Project, SavedReport, Tag, User
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectSortModeUpdate
+from app.schemas.tag import TagCreate, TagRead, ItemTagCreate, ItemTagRead
 from app.schemas.report import (
     ReportRunRequest,
     ReportRunResponse,
@@ -391,6 +392,132 @@ def run_custom_report(
         rows=rows,
         count=len(rows),
     )
+
+
+# ---- Tags (mission-based) ----
+@router.get("/{project_id}/tags", response_model=list[TagRead])
+def list_tags(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List tags for the project (mission). All users in the mission see the same tags."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    tags = db.query(Tag).filter(Tag.project_id == project_id).order_by(Tag.name).all()
+    return [TagRead.model_validate(t) for t in tags]
+
+
+@router.post("/{project_id}/tags", response_model=TagRead, status_code=201)
+def create_tag(
+    project_id: UUID,
+    body: TagCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a tag for the project (mission)."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    tag = Tag(project_id=project_id, name=body.name, color=body.color)
+    db.add(tag)
+    db.commit()
+    db.refresh(tag)
+    return TagRead.model_validate(tag)
+
+
+@router.get("/{project_id}/item-tags", response_model=list[ItemTagRead])
+def list_item_tags(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List item-tag assignments for the project. Used to show tag child nodes in the tree."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    q = (
+        db.query(ItemTag)
+        .join(Tag)
+        .filter(Tag.project_id == project_id)
+    )
+    item_tags = q.all()
+    return [
+        ItemTagRead(
+            id=it.id,
+            tag_id=it.tag_id,
+            target_type=it.target_type,
+            target_id=it.target_id,
+            tag_name=it.tag.name,
+            tag_color=it.tag.color,
+        )
+        for it in item_tags
+    ]
+
+
+@router.post("/{project_id}/item-tags", response_model=ItemTagRead, status_code=201)
+def add_item_tag(
+    project_id: UUID,
+    body: ItemTagCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add a tag to a host, port, port_evidence, or vuln_definition."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    tag = db.query(Tag).filter(Tag.id == body.tag_id, Tag.project_id == project_id).first()
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    existing = (
+        db.query(ItemTag)
+        .filter(
+            ItemTag.tag_id == body.tag_id,
+            ItemTag.target_type == body.target_type,
+            ItemTag.target_id == body.target_id,
+        )
+    ).first()
+    if existing:
+        return ItemTagRead(
+            id=existing.id,
+            tag_id=existing.tag_id,
+            target_type=existing.target_type,
+            target_id=existing.target_id,
+            tag_name=tag.name,
+            tag_color=tag.color,
+        )
+    item_tag = ItemTag(tag_id=body.tag_id, target_type=body.target_type, target_id=body.target_id)
+    db.add(item_tag)
+    db.commit()
+    db.refresh(item_tag)
+    return ItemTagRead(
+        id=item_tag.id,
+        tag_id=item_tag.tag_id,
+        target_type=item_tag.target_type,
+        target_id=item_tag.target_id,
+        tag_name=tag.name,
+        tag_color=tag.color,
+    )
+
+
+@router.delete("/{project_id}/item-tags/{item_tag_id}", status_code=204)
+def remove_item_tag(
+    project_id: UUID,
+    item_tag_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Remove a tag from an item (called when right-clicking the tag node)."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    item_tag = db.query(ItemTag).join(Tag).filter(ItemTag.id == item_tag_id, Tag.project_id == project_id).first()
+    if not item_tag:
+        raise HTTPException(status_code=404, detail="Item tag not found")
+    db.delete(item_tag)
+    db.commit()
+    return None
 
 
 @router.delete("/{project_id}", status_code=204)

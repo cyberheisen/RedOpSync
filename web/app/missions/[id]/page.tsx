@@ -3,7 +3,7 @@
 import { useParams } from "next/navigation";
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
-import { apiUrl } from "../../lib/api";
+import { apiUrl, formatApiErrorDetail } from "../../lib/api";
 import { useLockState } from "../../hooks/use-lock-state";
 import { parseFilter, matchEvidence, matchPort, matchHost, matchVuln } from "../../lib/tree-filter";
 import { AddHostModal } from "../../components/add-host-modal";
@@ -149,6 +149,9 @@ type Mission = {
   sort_mode?: string;
 };
 
+type ProjectTag = { id: string; project_id: string; name: string; color: string | null };
+type ItemTagRecord = { id: string; tag_id: string; target_type: string; target_id: string; tag_name: string | null; tag_color: string | null };
+
 type SelectedNode =
   | { type: "subnet"; id: string }
   | { type: "host"; id: string }
@@ -158,6 +161,7 @@ type SelectedNode =
   | { type: "host-vulnerabilities"; hostId: string }
   | { type: "vuln-instance"; id: string }
   | { type: "vuln-definition"; id: string }
+  | { type: "tag"; itemTagId: string; tagId: string; tagName: string; targetType: string; targetId: string; portId?: string; hostId?: string }
   | { type: "scope-notes" }
   | { type: "unresolved" }
   | { type: "note"; id: string; target: NoteTarget; targetId: string }
@@ -668,6 +672,14 @@ export default function MissionDetailPage() {
   const [projectTodos, setProjectTodos] = useState<ProjectTodo[]>([]);
   type UserOption = { id: string; username: string; role: string };
   const [users, setUsers] = useState<UserOption[]>([]);
+  const [projectTags, setProjectTags] = useState<ProjectTag[]>([]);
+  const [itemTags, setItemTags] = useState<ItemTagRecord[]>([]);
+  const [tagsVersion, setTagsVersion] = useState(0);
+  const [addTagModal, setAddTagModal] = useState<{ targetType: string; targetId: string; portId?: string; hostId?: string } | null>(null);
+  const [createTagModal, setCreateTagModal] = useState(false);
+  const [createTagName, setCreateTagName] = useState("");
+  const [createTagColor, setCreateTagColor] = useState("");
+  const [createTagSaving, setCreateTagSaving] = useState(false);
 
   const TREE_WIDTH_KEY = "redopsync-tree-width";
   const defaultTreeWidth = 280;
@@ -989,6 +1001,28 @@ export default function MissionDetailPage() {
     if (missionId) loadProjectTodos();
   }, [missionId, loadProjectTodos, todosVersion]);
 
+  const loadTagsAndItemTags = useCallback(() => {
+    if (!missionId) return;
+    Promise.all([
+      fetch(apiUrl(`/api/projects/${missionId}/tags`), { credentials: "include" }),
+      fetch(apiUrl(`/api/projects/${missionId}/item-tags`), { credentials: "include" }),
+    ])
+      .then(async ([tagsRes, itemTagsRes]) => {
+        const tags = tagsRes.ok ? (await tagsRes.json()) : [];
+        const itemTagsList = itemTagsRes.ok ? (await itemTagsRes.json()) : [];
+        setProjectTags(Array.isArray(tags) ? tags : []);
+        setItemTags(Array.isArray(itemTagsList) ? itemTagsList : []);
+      })
+      .catch(() => {
+        setProjectTags([]);
+        setItemTags([]);
+      });
+  }, [missionId]);
+
+  useEffect(() => {
+    if (missionId) loadTagsAndItemTags();
+  }, [missionId, loadTagsAndItemTags, tagsVersion]);
+
   useEffect(() => {
     fetch(apiUrl("/api/auth/users"), { credentials: "include" })
       .then((r) => (r.ok ? r.json() : []))
@@ -1026,6 +1060,57 @@ export default function MissionDetailPage() {
   useEffect(() => {
     if (selectedHost) refreshLocks();
   }, [selectedHost, refreshLocks]);
+
+  const itemTagsByTarget = useMemo(() => {
+    const map: Record<string, ItemTagRecord[]> = {};
+    for (const it of itemTags) {
+      const key = `${it.target_type}:${it.target_id}`;
+      if (!map[key]) map[key] = [];
+      map[key].push(it);
+    }
+    return map;
+  }, [itemTags]);
+
+  const getItemTagsFor = useCallback(
+    (targetType: string, targetId: string) => itemTagsByTarget[`${targetType}:${targetId}`] ?? [],
+    [itemTagsByTarget]
+  );
+
+  const handleAddItemTag = useCallback(
+    (tagId: string, targetType: string, targetId: string) => {
+      if (!missionId) return;
+      fetch(apiUrl(`/api/projects/${missionId}/item-tags`), {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag_id: tagId, target_type: targetType, target_id: targetId }),
+      })
+        .then((r) => {
+          if (r.ok) {
+            setTagsVersion((v) => v + 1);
+            setAddTagModal(null);
+          } else return r.json().then((d) => Promise.reject(d));
+        })
+        .catch((err) => setToast(formatApiErrorDetail(err?.detail ?? err, "Failed to add tag")));
+    },
+    [missionId]
+  );
+
+  const handleRemoveItemTag = useCallback(
+    (itemTagId: string) => {
+      if (!missionId) return;
+      fetch(apiUrl(`/api/projects/${missionId}/item-tags/${itemTagId}`), { method: "DELETE", credentials: "include" })
+        .then((r) => {
+          if (r.ok) {
+            setTagsVersion((v) => v + 1);
+            setContextMenu(null);
+            setSelectedNode(null);
+          } else return r.json().then((d) => Promise.reject(d));
+        })
+        .catch((err) => setToast(formatApiErrorDetail(err?.detail ?? err, "Failed to remove tag")));
+    },
+    [missionId]
+  );
 
   const toggleExpand = (key: string, onExpand?: () => void) => {
     setExpanded((prev) => {
@@ -1896,13 +1981,14 @@ export default function MissionDetailPage() {
     const notesLoad = notesLoading.has(h.id);
     const portCount = portsLoaded.has(h.id) ? ports.length : null;
     const vulnCount = vulnsLoaded.has(h.id) ? vulns.length : null;
+    const hasVulns = vulnCount !== null && vulnCount > 0;
     const countStr = isUnresolvedHost(h)
       ? ""
-      : portCount !== null && vulnCount !== null
+      : portCount !== null && hasVulns
         ? ` (${portCount} ports • ${vulnCount} vulns)`
         : portCount !== null
           ? ` (${portCount} ports)`
-          : vulnCount !== null
+          : hasVulns
             ? ` (${vulnCount} vulns)`
             : "";
 
@@ -1937,6 +2023,7 @@ export default function MissionDetailPage() {
                 { label: "Add Vulnerability", onClick: () => setVulnModal({ mode: "add", host: h }) },
                 { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "host", host: h }) },
                 { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "host", parentId: h.id, contextLabel: hostLabel(h) }) },
+                { label: "Add tag", onClick: () => setAddTagModal({ targetType: "host", targetId: h.id }) },
                 { label: "Rename", onClick: () => setRenameHostModal(h) },
                 { label: "Delete", onClick: () => setDeleteHostModal(h) },
               ],
@@ -1989,6 +2076,29 @@ export default function MissionDetailPage() {
                 >
                   <span style={{ width: 14 }}>•</span>
                   {t.title}
+                </div>
+              );
+            })}
+            {getItemTagsFor("host", h.id).map((it) => {
+              const isSel = selectedNode?.type === "tag" && selectedNode.itemTagId === it.id;
+              return (
+                <div
+                  key={it.id}
+                  className={"theme-tree-node" + (isSel ? " selected" : "")}
+                  style={{ ...nodeStyle(baseDepth + 1), color: it.tag_color ?? "var(--text-muted)" }}
+                  onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "tag", itemTagId: it.id, tagId: it.tag_id, tagName: it.tag_name ?? "", targetType: "host", targetId: h.id }); }}
+                  onContextMenu={(ev) => {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    setContextMenu({
+                      x: ev.clientX,
+                      y: ev.clientY,
+                      items: [{ label: "Remove tag", onClick: () => handleRemoveItemTag(it.id) }],
+                    });
+                  }}
+                >
+                  <span style={{ width: 14 }}>🏷</span>
+                  <span>{it.tag_name ?? ""}</span>
                 </div>
               );
             })}
@@ -2098,6 +2208,7 @@ export default function MissionDetailPage() {
                                 { label: "Edit Port", onClick: () => setPortModal({ mode: "edit", host: h, port: p }) },
                                 { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "port", port: p, host: h }) },
                                 { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "port", parentId: p.id, contextLabel: `${p.number}/${p.protocol} on ${hostLabel(h)}` }) },
+                                { label: "Add tag", onClick: () => setAddTagModal({ targetType: "port", targetId: p.id, hostId: h.id }) },
                                 { label: "Delete Port", onClick: () => setDeletePortModal({ port: p, host: h }) },
                               ],
                             });
@@ -2152,6 +2263,29 @@ export default function MissionDetailPage() {
                                 </div>
                               );
                             })}
+                            {getItemTagsFor("port", p.id).map((it) => {
+                              const isSel = selectedNode?.type === "tag" && selectedNode.itemTagId === it.id;
+                              return (
+                                <div
+                                  key={it.id}
+                                  className={"theme-tree-node" + (isSel ? " selected" : "")}
+                                  style={{ ...nodeStyle(baseDepth + 3), color: it.tag_color ?? "var(--text-muted)" }}
+                                  onClick={(evt) => { evt.stopPropagation(); setSelectedNode({ type: "tag", itemTagId: it.id, tagId: it.tag_id, tagName: it.tag_name ?? "", targetType: "port", targetId: p.id, hostId: h.id }); }}
+                                  onContextMenu={(evt) => {
+                                    evt.preventDefault();
+                                    evt.stopPropagation();
+                                    setContextMenu({
+                                      x: evt.clientX,
+                                      y: evt.clientY,
+                                      items: [{ label: "Remove tag", onClick: () => handleRemoveItemTag(it.id) }],
+                                    });
+                                  }}
+                                >
+                                  <span style={{ width: 14 }}>🏷</span>
+                                  <span>{it.tag_name ?? ""}</span>
+                                </div>
+                              );
+                            })}
                             {evLoad ? (
                               <div className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 3), color: "var(--text-muted)" }}>Loading…</div>
                             ) : evList.length === 0 ? (
@@ -2177,6 +2311,7 @@ export default function MissionDetailPage() {
                                           y: evt.clientY,
                                           items: [
                                             { label: "Add note", onClick: () => setNoteModal({ mode: "add", target: "evidence", evidence: ev }) },
+                                            { label: "Add tag", onClick: () => setAddTagModal({ targetType: "port_evidence", targetId: ev.id, portId: p.id, hostId: h.id }) },
                                             { label: "Delete", onClick: () => handleDeleteEvidence(p.id, ev.id, h.id) },
                                           ],
                                         });
@@ -2185,6 +2320,29 @@ export default function MissionDetailPage() {
                                       <span style={{ width: 14 }}>•</span>
                                       <span style={{ fontSize: 13 }}>{label}</span>
                                     </div>
+                                    {getItemTagsFor("port_evidence", ev.id).map((it) => {
+                                      const isTagSel = selectedNode?.type === "tag" && selectedNode.itemTagId === it.id;
+                                      return (
+                                        <div
+                                          key={it.id}
+                                          className={"theme-tree-node" + (isTagSel ? " selected" : "")}
+                                          style={{ ...nodeStyle(baseDepth + 4), color: it.tag_color ?? "var(--text-muted)" }}
+                                          onClick={(evt) => { evt.stopPropagation(); setSelectedNode({ type: "tag", itemTagId: it.id, tagId: it.tag_id, tagName: it.tag_name ?? "", targetType: "port_evidence", targetId: ev.id, portId: p.id, hostId: h.id }); }}
+                                          onContextMenu={(evt) => {
+                                            evt.preventDefault();
+                                            evt.stopPropagation();
+                                            setContextMenu({
+                                              x: evt.clientX,
+                                              y: evt.clientY,
+                                              items: [{ label: "Remove tag", onClick: () => handleRemoveItemTag(it.id) }],
+                                            });
+                                          }}
+                                        >
+                                          <span style={{ width: 14 }}>🏷</span>
+                                          <span>{it.tag_name ?? ""}</span>
+                                        </div>
+                                      );
+                                    })}
                                     {/* Evidence notes as child nodes */}
                                     {projectNotes.filter((n) => n.target_type === "evidence" && n.target_id === ev.id).map((n) => {
                                         const isNoteSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "evidence";
@@ -2226,71 +2384,73 @@ export default function MissionDetailPage() {
                 )}
               </>
             )}
-            <div
-              className={"theme-tree-node" + (selectedNode?.type === "host-vulnerabilities" && selectedNode.hostId === h.id ? " selected" : "")}
-              style={nodeStyle(baseDepth + 1)}
-              onClick={(ev) => {
-                ev.stopPropagation();
-                toggleExpand(vulnsKey, () => loadVulnsForHost(h.id));
-                setSelectedNode({ type: "host-vulnerabilities", hostId: h.id });
-              }}
-              onContextMenu={(ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                setContextMenu({
-                  x: ev.clientX,
-                  y: ev.clientY,
-                  items: [
-                    { label: "Expand/Collapse", onClick: () => toggleExpandCollapse(vulnsKey) },
-                    { label: "Add Vulnerability", onClick: () => setVulnModal({ mode: "add", host: h }) },
-                  ],
-                });
-              }}
-            >
-              <span style={{ width: 14, textAlign: "center" }}>{vulnsExp ? "▼" : "▶"}</span>
-              <span style={{ opacity: 0.8 }}>{ICON.vulns}</span>
-              <span>Vulnerabilities</span>
-              {vulnsLoad && <Spinner />}
-              {vulnsLoaded.has(h.id) && !vulnsLoad && <span style={{ color: "var(--text-muted)", fontSize: 11 }}>({vulns.length})</span>}
-            </div>
-            {vulnsExp && (
+            {hasVulns && (
               <>
-                {vulnsLoad ? (
-                  <div className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 2), color: "var(--text-muted)" }}>Loading…</div>
-                ) : vulns.length === 0 ? (
-                  <div className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 2), color: "var(--text-dim)", fontStyle: "italic" }}>None</div>
-                ) : (
-                  [...vulns].sort(compareBySeverity).map((v) => {
-                    const isSel = selectedNode?.type === "vuln-instance" && selectedNode.id === v.id;
-                    const effSev = getEffectiveSeverity(v);
-                    return (
-                      <div
-                        key={v.id}
-                        className={"theme-tree-node" + (isSel ? " selected" : "")}
-                        style={{ ...nodeStyle(baseDepth + 2), color: getSeverityColor(effSev) }}
-                        onClick={(ev) => {
-                          ev.stopPropagation();
-                          setSelectedNode({ type: "vuln-instance", id: v.id });
-                        }}
-                        onContextMenu={(ev) => {
-                          ev.preventDefault();
-                          ev.stopPropagation();
-                          setContextMenu({
-                            x: ev.clientX,
-                            y: ev.clientY,
-                            items: [
-                              { label: "Edit", onClick: () => setVulnModal({ mode: "edit", host: h, vuln: v }) },
-                              { label: "Delete", onClick: () => setDeleteVulnModal({ instance: v }) },
-                            ],
-                          });
-                        }}
-                      >
-                        <span style={{ width: 14 }}>•</span>
-                        {v.definition_title ?? v.id.slice(0, 8)}
-                        <span style={{ color: "var(--text-muted)", fontSize: 11 }}> [{v.status}]</span>
-                      </div>
-                    );
-                  })
+                <div
+                  className={"theme-tree-node" + (selectedNode?.type === "host-vulnerabilities" && selectedNode.hostId === h.id ? " selected" : "")}
+                  style={nodeStyle(baseDepth + 1)}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    toggleExpand(vulnsKey, () => loadVulnsForHost(h.id));
+                    setSelectedNode({ type: "host-vulnerabilities", hostId: h.id });
+                  }}
+                  onContextMenu={(ev) => {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    setContextMenu({
+                      x: ev.clientX,
+                      y: ev.clientY,
+                      items: [
+                        { label: "Expand/Collapse", onClick: () => toggleExpandCollapse(vulnsKey) },
+                        { label: "Add Vulnerability", onClick: () => setVulnModal({ mode: "add", host: h }) },
+                      ],
+                    });
+                  }}
+                >
+                  <span style={{ width: 14, textAlign: "center" }}>{vulnsExp ? "▼" : "▶"}</span>
+                  <span style={{ opacity: 0.8 }}>{ICON.vulns}</span>
+                  <span>Vulnerabilities</span>
+                  {vulnsLoad && <Spinner />}
+                  {vulnsLoaded.has(h.id) && !vulnsLoad && <span style={{ color: "var(--text-muted)", fontSize: 11 }}>({vulns.length})</span>}
+                </div>
+                {vulnsExp && (
+                  <>
+                    {vulnsLoad ? (
+                      <div className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 2), color: "var(--text-muted)" }}>Loading…</div>
+                    ) : (
+                      [...vulns].sort(compareBySeverity).map((v) => {
+                        const isSel = selectedNode?.type === "vuln-instance" && selectedNode.id === v.id;
+                        const effSev = getEffectiveSeverity(v);
+                        return (
+                          <div
+                            key={v.id}
+                            className={"theme-tree-node" + (isSel ? " selected" : "")}
+                            style={{ ...nodeStyle(baseDepth + 2), color: getSeverityColor(effSev) }}
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              setSelectedNode({ type: "vuln-instance", id: v.id });
+                            }}
+                            onContextMenu={(ev) => {
+                              ev.preventDefault();
+                              ev.stopPropagation();
+                              setContextMenu({
+                                x: ev.clientX,
+                                y: ev.clientY,
+                                items: [
+                                  { label: "Edit", onClick: () => setVulnModal({ mode: "edit", host: h, vuln: v }) },
+                                  { label: "Delete", onClick: () => setDeleteVulnModal({ instance: v }) },
+                                ],
+                              });
+                            }}
+                          >
+                            <span style={{ width: 14 }}>•</span>
+                            {v.definition_title ?? v.id.slice(0, 8)}
+                            <span style={{ color: "var(--text-muted)", fontSize: 11 }}> [{v.status}]</span>
+                          </div>
+                        );
+                      })
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -2349,6 +2509,14 @@ export default function MissionDetailPage() {
       return (
         <div style={{ padding: 24 }}>
           <p style={{ color: "var(--text-muted)" }}>Select a node from the tree. Right-click for actions.</p>
+        </div>
+      );
+    }
+    if (selectedNode.type === "tag") {
+      return (
+        <div style={{ padding: 24 }}>
+          <h2 style={{ margin: "0 0 8px", fontSize: "1.1rem" }}>Tag: {selectedNode.tagName}</h2>
+          <p style={{ color: "var(--text-muted)", fontSize: 14 }}>Right-click this tag in the tree to remove it from the item.</p>
         </div>
       );
     }
@@ -3342,6 +3510,7 @@ export default function MissionDetailPage() {
                               { label: "Edit", onClick: () => setVulnModal({ mode: "edit", host: editHost ?? undefined, definition: d }) },
                               { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "vulnerability_definition", definition: d }) },
                               { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "vulnerability_definition", parentId: d.id, contextLabel: `Vulnerability: ${d.title}` }) },
+                              { label: "Add tag", onClick: () => setAddTagModal({ targetType: "vuln_definition", targetId: d.id }) },
                               { label: "Delete", onClick: () => setDeleteVulnModal({ instance: { id: "", host_id: d.affected_host_ids?.[0] ?? "", vulnerability_definition_id: d.id, definition_title: d.title, definition_severity: d.severity, definition_cvss_score: d.cvss_score, definition_cve_ids: d.cve_ids ?? [], definition_description_md: d.description_md, definition_evidence_md: d.evidence_md, definition_discovered_by: d.discovered_by, port_id: null, status: "open" } }) },
                             ],
                           });
@@ -3351,6 +3520,29 @@ export default function MissionDetailPage() {
                         {d.title}
                         <AffectedHostBadge count={d.affected_host_ids.length} onClick={() => setManageAffectedHostsModal(d)} compact />
                       </div>
+                      {getItemTagsFor("vuln_definition", d.id).map((it) => {
+                        const isTagSel = selectedNode?.type === "tag" && selectedNode.itemTagId === it.id;
+                        return (
+                          <div
+                            key={it.id}
+                            className={"theme-tree-node" + (isTagSel ? " selected" : "")}
+                            style={{ ...nodeStyle(2), color: it.tag_color ?? "var(--text-muted)" }}
+                            onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "tag", itemTagId: it.id, tagId: it.tag_id, tagName: it.tag_name ?? "", targetType: "vuln_definition", targetId: d.id }); }}
+                            onContextMenu={(ev) => {
+                              ev.preventDefault();
+                              ev.stopPropagation();
+                              setContextMenu({
+                                x: ev.clientX,
+                                y: ev.clientY,
+                                items: [{ label: "Remove tag", onClick: () => handleRemoveItemTag(it.id) }],
+                              });
+                            }}
+                          >
+                            <span style={{ width: 14 }}>🏷</span>
+                            <span>{it.tag_name ?? ""}</span>
+                          </div>
+                        );
+                      })}
                       {projectNotes.filter((n) => n.target_type === "vulnerability_definition" && n.target_id === d.id).map((n) => {
                         const isNoteSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "vulnerability_definition";
                         const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
@@ -3775,6 +3967,92 @@ export default function MissionDetailPage() {
                 Delete
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {addTagModal && (
+        <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={() => { setAddTagModal(null); setCreateTagModal(false); }}>
+          <div style={{ backgroundColor: "var(--bg-panel)", borderRadius: 8, border: "1px solid var(--border)", padding: 24, minWidth: 260, maxWidth: 360 }} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ margin: "0 0 12px", fontSize: "1.1rem" }}>Add tag</h2>
+            {createTagModal ? (
+              <div>
+                <label style={{ display: "block", marginBottom: 4, fontSize: 14 }}>Tag name</label>
+                <input
+                  type="text"
+                  className="theme-input"
+                  value={createTagName}
+                  onChange={(e) => setCreateTagName(e.target.value)}
+                  placeholder="e.g. Critical"
+                  style={{ width: "100%", marginBottom: 12 }}
+                  autoFocus
+                />
+                <label style={{ display: "block", marginBottom: 4, fontSize: 14 }}>Color (optional)</label>
+                <input
+                  type="text"
+                  className="theme-input"
+                  value={createTagColor}
+                  onChange={(e) => setCreateTagColor(e.target.value)}
+                  placeholder="e.g. #ff0000 or red"
+                  style={{ width: "100%", marginBottom: 12 }}
+                />
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                  <button type="button" className="theme-btn theme-btn-ghost" onClick={() => setCreateTagModal(false)} disabled={createTagSaving}>Cancel</button>
+                  <button
+                    type="button"
+                    className="theme-btn theme-btn-primary"
+                    disabled={!createTagName.trim() || createTagSaving}
+                    onClick={() => {
+                      if (!missionId || !createTagName.trim()) return;
+                      setCreateTagSaving(true);
+                      fetch(apiUrl(`/api/projects/${missionId}/tags`), {
+                        method: "POST",
+                        credentials: "include",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ name: createTagName.trim(), color: createTagColor.trim() || null }),
+                      })
+                        .then((r) => (r.ok ? r.json() : r.json().then((d) => Promise.reject(d))))
+                        .then((newTag: ProjectTag) => {
+                          setTagsVersion((v) => v + 1);
+                          setCreateTagModal(false);
+                          setCreateTagName("");
+                          setCreateTagColor("");
+                          handleAddItemTag(newTag.id, addTagModal!.targetType, addTagModal!.targetId);
+                          setAddTagModal(null);
+                        })
+                        .catch((err) => setToast(formatApiErrorDetail(err?.detail ?? err, "Failed to create tag")))
+                        .finally(() => setCreateTagSaving(false));
+                    }}
+                  >
+                    {createTagSaving ? "Creating…" : "Create and add"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {projectTags.length === 0 ? (
+                  <p style={{ margin: "0 0 12px", color: "var(--text-muted)", fontSize: 14 }}>No tags in this mission. Create one first.</p>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+                    {projectTags.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        className="theme-btn theme-btn-ghost"
+                        style={{ justifyContent: "flex-start", textAlign: "left" }}
+                        onClick={() => handleAddItemTag(t.id, addTagModal.targetType, addTagModal.targetId)}
+                      >
+                        <span style={{ marginRight: 8, color: t.color ?? "var(--text-muted)" }}>🏷</span>
+                        {t.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
+                  <button type="button" className="theme-btn theme-btn-ghost" onClick={() => setCreateTagModal(true)}>Create tag</button>
+                  <button type="button" className="theme-btn theme-btn-ghost" onClick={() => { setAddTagModal(null); setCreateTagModal(false); }}>Cancel</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

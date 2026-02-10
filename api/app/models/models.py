@@ -49,6 +49,7 @@ class Project(Base):
     hosts = relationship("Host", back_populates="project", cascade="all, delete-orphan")
     todos = relationship("Todo", back_populates="project", cascade="all, delete-orphan")
     saved_reports = relationship("SavedReport", back_populates="project", cascade="all, delete-orphan")
+    tags = relationship("Tag", back_populates="project", cascade="all, delete-orphan")
 
 
 class Subnet(Base):
@@ -281,6 +282,31 @@ class SavedReport(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
     project = relationship("Project", back_populates="saved_reports")
+
+
+class Tag(Base):
+    __tablename__ = "tags"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_default)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(128), nullable=False)
+    color = Column(String(32), nullable=True)
+
+    project = relationship("Project", back_populates="tags")
+    item_tags = relationship("ItemTag", back_populates="tag", cascade="all, delete-orphan")
+
+
+class ItemTag(Base):
+    __tablename__ = "item_tags"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid_default)
+    tag_id = Column(UUID(as_uuid=True), ForeignKey("tags.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_type = Column(String(32), nullable=False)
+    target_id = Column(UUID(as_uuid=True), nullable=False)
+
+    tag = relationship("Tag", back_populates="item_tags")
+
+    __table_args__ = (UniqueConstraint("tag_id", "target_type", "target_id", name="uq_item_tag_target"),)
 
 
 class Lock(Base):
