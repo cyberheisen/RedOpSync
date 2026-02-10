@@ -8,3 +8,7 @@ __pycache__/
 htmlcov/
 node_modules/
 .next/
+# API venv (do not list every file; use directories)
+api/bin/
+api/lib/
+api/pyvenv.cfg
