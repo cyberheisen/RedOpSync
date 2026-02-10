@@ -54,13 +54,20 @@ class ParseResult:
     root_name: str = ""
 
 
+def _normalize_host(host: str) -> str:
+    """Strip leading/trailing dots from hostname (e.g. from filename encoding)."""
+    if not host:
+        return host
+    return host.strip(".")
+
+
 def _parse_url(url: str) -> ParsedURL | None:
     """Parse URL to extract host, port, protocol."""
     try:
         u = urlparse(url)
         if not u.hostname:
             return None
-        host = u.hostname
+        host = _normalize_host(u.hostname)
         port = u.port
         scheme = (u.scheme or "http").lower()
         if scheme not in ("http", "https"):
@@ -144,7 +151,9 @@ def _filename_to_url_guess(filename: str) -> str | None:
     port_suffix = int(last) if last.isdigit() and len(last) <= 5 else None
     if port_suffix is not None and 1 <= port_suffix <= 65535:
         rest = rest[: -len(last) - 1]
-    host_part = rest.replace("-", ".")
+    host_part = _normalize_host(rest.replace("-", "."))
+    if not host_part:
+        return None
     if re.match(r"^[\d.]+$", host_part):
         if port_suffix is not None:
             return f"{scheme}://{host_part}:{port_suffix}/"
