@@ -162,6 +162,7 @@ type SelectedNode =
   | { type: "vuln-instance"; id: string }
   | { type: "vuln-definition"; id: string }
   | { type: "tag"; itemTagId: string; tagId: string; tagName: string; targetType: string; targetId: string; portId?: string; hostId?: string }
+  | { type: "tag-filter"; tagId: string; tagName: string }
   | { type: "scope-notes" }
   | { type: "unresolved" }
   | { type: "note"; id: string; target: NoteTarget; targetId: string }
@@ -169,6 +170,7 @@ type SelectedNode =
   | { type: "custom-reports" }
   | { type: "saved-report"; id: string }
   | { type: "todos" }
+  | { type: "tags" }
   | { type: "todo"; id: string }
   | { type: "jobs" }
   | null;
@@ -1071,6 +1073,17 @@ export default function MissionDetailPage() {
     return map;
   }, [itemTags]);
 
+  /** Host IDs that have a given tag (for tag-filter in tree). */
+  const hostIdsByTagId = useMemo(() => {
+    const map: Record<string, Set<string>> = {};
+    for (const it of itemTags) {
+      if (it.target_type !== "host") continue;
+      if (!map[it.tag_id]) map[it.tag_id] = new Set();
+      map[it.tag_id].add(it.target_id);
+    }
+    return map;
+  }, [itemTags]);
+
   const getItemTagsFor = useCallback(
     (targetType: string, targetId: string) => itemTagsByTarget[`${targetType}:${targetId}`] ?? [],
     [itemTagsByTarget]
@@ -1266,6 +1279,57 @@ export default function MissionDetailPage() {
     };
   }, [parsedFilter, hosts, subnets, hostsBySubnet, portsByHost, evidenceByPort, vulnsByHost]);
 
+  const activeTagFilter = selectedNode?.type === "tag-filter" ? selectedNode : null;
+  const {
+    effectiveMatchingHostIds,
+    effectiveMatchingSubnetIds,
+    effectiveHasMatchingUnresolved,
+    effectiveMatchingUnassignedHostIds,
+    effectiveVisibleHostCount,
+    tagFilterActive,
+  } = useMemo(() => {
+    const allHostIds = new Set(hosts.map((h) => h.id));
+    if (!activeTagFilter) {
+      return {
+        effectiveMatchingHostIds: matchingHostIds,
+        effectiveMatchingSubnetIds: matchingSubnetIds,
+        effectiveHasMatchingUnresolved: hasMatchingUnresolved,
+        effectiveMatchingUnassignedHostIds: matchingUnassignedHostIds,
+        effectiveVisibleHostCount: visibleHostCount,
+        tagFilterActive: false,
+      };
+    }
+    const tagHosts = hostIdsByTagId[activeTagFilter.tagId] ?? new Set<string>();
+    const effective = filterActive
+      ? new Set([...tagHosts].filter((id) => matchingHostIds.has(id)))
+      : new Set(tagHosts);
+    const effectiveSubnets = new Set(
+      subnets.filter((s) => (hostsBySubnet[s.id] ?? []).some((h) => effective.has(h.id))).map((s) => s.id)
+    );
+    const unresolvedHosts = hostsBySubnet["_unresolved"] ?? [];
+    const unassignedHosts = hostsBySubnet["_unassigned"] ?? [];
+    return {
+      effectiveMatchingHostIds: effective,
+      effectiveMatchingSubnetIds: effectiveSubnets,
+      effectiveHasMatchingUnresolved: unresolvedHosts.some((h) => effective.has(h.id)),
+      effectiveMatchingUnassignedHostIds: new Set(unassignedHosts.filter((h) => effective.has(h.id)).map((h) => h.id)),
+      effectiveVisibleHostCount: effective.size,
+      tagFilterActive: true,
+    };
+  }, [
+    activeTagFilter,
+    filterActive,
+    matchingHostIds,
+    matchingSubnetIds,
+    hasMatchingUnresolved,
+    matchingUnassignedHostIds,
+    visibleHostCount,
+    hostIdsByTagId,
+    hosts,
+    subnets,
+    hostsBySubnet,
+  ]);
+
   const filterNeedsEvidence = parsedFilter && ["page_title", "response_code", "server", "technology", "source", "screenshot"].includes(parsedFilter.attr);
   useEffect(() => {
     if (!filterActive || !filterNeedsEvidence) return;
@@ -1274,26 +1338,26 @@ export default function MissionDetailPage() {
   }, [filterActive, filterNeedsEvidence, portsByHost, loadEvidenceForPort]);
 
   useEffect(() => {
-    if (filterActive && parsedFilter) {
+    if ((filterActive && parsedFilter) || tagFilterActive) {
       setExpanded((prev) => {
         const next = new Set(prev);
         next.add("scope");
         subnets.forEach((s) => {
-          if (matchingSubnetIds.has(s.id)) next.add(`subnet:${s.id}`);
+          if (effectiveMatchingSubnetIds.has(s.id)) next.add(`subnet:${s.id}`);
         });
-        if (hasMatchingUnresolved) next.add("unresolved");
+        if (effectiveHasMatchingUnresolved) next.add("unresolved");
         hosts.forEach((h) => {
-          if (matchingHostIds.has(h.id)) {
+          if (effectiveMatchingHostIds.has(h.id)) {
             next.add(`host:${h.id}`);
             const ports = portsByHost[h.id] ?? [];
-            const portMatch = ports.some((p) => matchingPortIds.has(p.id));
+            const portMatch = !filterActive ? true : ports.some((p) => matchingPortIds.has(p.id));
             if (portMatch) next.add(`host-ports:${h.id}`);
           }
         });
         return next;
       });
     }
-  }, [filterActive, parsedFilter, matchingSubnetIds, matchingHostIds, matchingPortIds, hasMatchingUnresolved, subnets, hosts, portsByHost]);
+  }, [filterActive, tagFilterActive, parsedFilter, effectiveMatchingSubnetIds, effectiveMatchingHostIds, effectiveHasMatchingUnresolved, matchingPortIds, subnets, hosts, portsByHost]);
 
   const unresolvedCount = (hostsBySubnet["_unresolved"] ?? []).length;
   useEffect(() => {
@@ -2520,6 +2584,32 @@ export default function MissionDetailPage() {
         </div>
       );
     }
+    if (selectedNode.type === "tags") {
+      return (
+        <div style={{ padding: 24 }}>
+          <h2 style={{ margin: "0 0 8px", fontSize: "1.1rem" }}>Tags</h2>
+          <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 16 }}>
+            Mission tags. Expand to see all tags. Click a tag to filter the tree so only hosts with that tag are shown.
+          </p>
+          {projectTags.length === 0 && (
+            <p style={{ color: "var(--text-dim)", fontSize: 14 }}>No tags yet. Right-click a host, port, evidence, or vulnerability and choose &quot;Add tag&quot; to create one.</p>
+          )}
+        </div>
+      );
+    }
+    if (selectedNode.type === "tag-filter") {
+      return (
+        <div style={{ padding: 24 }}>
+          <h2 style={{ margin: "0 0 8px", fontSize: "1.1rem" }}>Tag: {selectedNode.tagName}</h2>
+          <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 16 }}>
+            Showing only hosts (and their ports, evidence, vulns) that have this tag. {effectiveVisibleHostCount} host{effectiveVisibleHostCount !== 1 ? "s" : ""} match.
+          </p>
+          <button type="button" className="theme-btn theme-btn-ghost" onClick={() => setSelectedNode(null)}>
+            Clear tag filter
+          </button>
+        </div>
+      );
+    }
     if (selectedNode.type === "vulnerabilities") {
       return (
         <div style={{ padding: 24 }}>
@@ -3182,7 +3272,7 @@ export default function MissionDetailPage() {
               </select>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, backgroundColor: "var(--bg-panel)", borderRadius: 6, border: "1px solid var(--border)", padding: "4px 8px" }}>
-              <span style={{ color: "var(--text-muted)", fontSize: 14 }} title="Filter">{filterActive ? "🔽" : "▸"}</span>
+              <span style={{ color: "var(--text-muted)", fontSize: 14 }} title="Filter">{(filterActive || tagFilterActive) ? "🔽" : "▸"}</span>
               <input
                 type="text"
                 className="theme-input"
@@ -3212,10 +3302,13 @@ export default function MissionDetailPage() {
                 ?
               </button>
             </div>
-            {filterActive && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, fontSize: 11, color: "var(--text-muted)" }}>
+            {(filterActive || tagFilterActive) && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, fontSize: 11, color: "var(--text-muted)", flexWrap: "wrap" }}>
                 <span style={{ backgroundColor: "var(--accent)", color: "var(--bg)", padding: "2px 6px", borderRadius: 4 }}>Filtered</span>
-                <span>{visibleHostCount} of {hosts.length} hosts</span>
+                {tagFilterActive && activeTagFilter && (
+                  <span style={{ color: "var(--text)" }}>Tag: {activeTagFilter.tagName}</span>
+                )}
+                <span>{effectiveVisibleHostCount} of {hosts.length} hosts</span>
               </div>
             )}
           </div>
@@ -3288,11 +3381,11 @@ export default function MissionDetailPage() {
                   );
                 });
               })()}
-              {subnets.filter((s) => !filterActive || matchingSubnetIds.has(s.id)).map((s) => {
+              {subnets.filter((s) => !filterActive && !tagFilterActive || effectiveMatchingSubnetIds.has(s.id)).map((s) => {
                 const key = `subnet:${s.id}`;
                 const isExp = expanded.has(key);
                 const isSel = selectedNode?.type === "subnet" && selectedNode.id === s.id;
-                const subnetHosts = (hostsBySubnet[s.id] ?? []).filter((h) => !filterActive || matchingHostIds.has(h.id));
+                const subnetHosts = (hostsBySubnet[s.id] ?? []).filter((h) => !filterActive && !tagFilterActive || effectiveMatchingHostIds.has(h.id));
                 const hostCount = filterActive ? subnetHosts.length : (hostsBySubnet[s.id] ?? []).length;
                 return (
                   <div key={s.id}>
@@ -3374,7 +3467,7 @@ export default function MissionDetailPage() {
                 );
               })}
               {/* Unresolved: hosts where DNS exists but IP is unresolved */}
-              {(!filterActive ? (hostsBySubnet["_unresolved"] ?? []).length > 0 : hasMatchingUnresolved) && (
+              {(!filterActive && !tagFilterActive ? (hostsBySubnet["_unresolved"] ?? []).length > 0 : effectiveHasMatchingUnresolved) && (
                 <div>
                   <div
                     className={"theme-tree-node" + (selectedNode?.type === "unresolved" ? " selected" : "")}
@@ -3400,14 +3493,14 @@ export default function MissionDetailPage() {
                   </div>
                   {expanded.has("unresolved") &&
                     (hostsBySubnet["_unresolved"] ?? [])
-                      .filter((h) => !filterActive || matchingHostIds.has(h.id))
+                      .filter((h) => !filterActive && !tagFilterActive || effectiveMatchingHostIds.has(h.id))
                       .map((h) => (
                         <div key={h.id}>{renderTreeHost(h, 2)}</div>
                       ))}
                 </div>
               )}
               {/* Unassigned: hosts with real IP but no subnet */}
-              {(filterActive ? [...matchingUnassignedHostIds].map((id) => hosts.find((h) => h.id === id)).filter(Boolean) as Host[] : (hostsBySubnet["_unassigned"] ?? [])).map((h) => (
+              {(filterActive || tagFilterActive ? [...effectiveMatchingUnassignedHostIds].map((id) => hosts.find((h) => h.id === id)).filter(Boolean) as Host[] : (hostsBySubnet["_unassigned"] ?? [])).map((h) => (
                 <div key={h.id}>{renderTreeHost(h, 1)}</div>
               ))}
             </>
@@ -3630,6 +3723,49 @@ export default function MissionDetailPage() {
               })}
             </>
           )}
+          <div>
+            <div
+              className={"theme-tree-node" + (selectedNode?.type === "tags" ? " selected" : "")}
+              style={{ ...nodeStyle(0), paddingLeft: 12 }}
+              onClick={(ev) => {
+                ev.stopPropagation();
+                toggleExpand("tags-root");
+                setSelectedNode({ type: "tags" });
+              }}
+            >
+              <span style={{ width: 14 }}>{expanded.has("tags-root") ? "▼" : "▶"}</span>
+              <span style={{ opacity: 0.9 }}>🏷</span>
+              Tags
+              {projectTags.length > 0 && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({projectTags.length})</span>}
+            </div>
+            {expanded.has("tags-root") && (
+              <>
+                {projectTags.length === 0 ? (
+                  <div className="theme-tree-node" style={{ ...nodeStyle(1), paddingLeft: 12, color: "var(--text-dim)", fontStyle: "italic" }}>No tags in this mission</div>
+                ) : (
+                  projectTags.map((t) => {
+                    const isSel = selectedNode?.type === "tag-filter" && selectedNode.tagId === t.id;
+                    const count = (hostIdsByTagId[t.id] ?? new Set()).size;
+                    return (
+                      <div
+                        key={t.id}
+                        className={"theme-tree-node" + (isSel ? " selected" : "")}
+                        style={{ ...nodeStyle(1), paddingLeft: 12, color: t.color ?? "var(--text)" }}
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          setSelectedNode(isSel ? null : { type: "tag-filter", tagId: t.id, tagName: t.name });
+                        }}
+                      >
+                        <span style={{ width: 14 }}>•</span>
+                        {t.name}
+                        {count > 0 && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({count})</span>}
+                      </div>
+                    );
+                  })
+                )}
+              </>
+            )}
+          </div>
           <div>
             <div
               className={"theme-tree-node" + (selectedNode?.type === "todos" ? " selected" : "")}
