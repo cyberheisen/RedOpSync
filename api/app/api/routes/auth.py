@@ -27,6 +27,17 @@ def _get_client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
+def _is_secure_request(request: Request) -> bool:
+    """True if the client sees this as HTTPS (or localhost, which browsers treat as secure)."""
+    proto = request.headers.get("x-forwarded-proto", "").strip().lower()
+    if proto == "https":
+        return True
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    if host in ("localhost", "127.0.0.1"):
+        return True
+    return False
+
+
 @router.post("/login", response_model=LoginResponse)
 def login(
     body: LoginRequest,
@@ -50,12 +61,16 @@ def login(
         user.username,
         user.role.value if hasattr(user.role, "value") else user.role,
     )
+    # On HTTPS or localhost: Secure + SameSite=None so cookie is sent cross-origin (e.g. :3000 -> :8000).
+    # On HTTP (e.g. another machine at http://ip:8000): Secure=False so the cookie is stored; SameSite=Lax
+    # still sends it for same host different port (same site).
+    secure = _is_secure_request(request)
     response.set_cookie(
         key=TOKEN_COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=secure,
+        samesite="none" if secure else "lax",
         max_age=settings.jwt_expire_hours * 3600,
         path="/",
     )
@@ -66,8 +81,11 @@ def login(
 
 
 @router.post("/logout")
-def logout(response: Response):
-    response.delete_cookie(key=TOKEN_COOKIE_NAME, path="/")
+def logout(request: Request, response: Response):
+    secure = _is_secure_request(request)
+    response.delete_cookie(
+        key=TOKEN_COOKIE_NAME, path="/", secure=secure, samesite="none" if secure else "lax"
+    )
     return {"ok": True}
 
 

@@ -32,6 +32,8 @@ export default function LoginPage() {
         setError(msg);
         return;
       }
+      // Brief delay so the browser commits the Set-Cookie before we navigate away
+      await new Promise((r) => setTimeout(r, 100));
       window.location.href = "/";
     } catch {
       setError("Network error");
