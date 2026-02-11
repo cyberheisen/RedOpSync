@@ -1,0 +1,30 @@
+{"hypothesisId":"C,D,E","location":"auth-guard.tsx:useEffect","message":"AuthGuard fetch /me","data":{"meUrl":"http://localhost:8000/api/auth/me","pathname":"/","t":1770823568809},"timestamp":1770823568809}
+{"hypothesisId":"C,D,E","location":"auth-guard.tsx:useEffect","message":"AuthGuard fetch /me","data":{"meUrl":"http://localhost:8000/api/auth/me","pathname":"/","t":1770823568810},"timestamp":1770823568810}
+{"hypothesisId":"C,E","location":"auth-guard.tsx:me response","message":"AuthGuard /me result","data":{"status":401,"pathname":"/","t":1770823568817},"timestamp":1770823568817}
+{"hypothesisId":"C,E","location":"auth-guard.tsx:me response","message":"AuthGuard /me result","data":{"status":401,"pathname":"/","t":1770823568819},"timestamp":1770823568819}
+{"hypothesisId":"C,D,E","location":"auth-guard.tsx:useEffect","message":"AuthGuard fetch /me","data":{"meUrl":"http://localhost:8000/api/auth/me","pathname":"/login","t":1770823568988},"timestamp":1770823568988}
+{"hypothesisId":"C,E","location":"auth-guard.tsx:me response","message":"AuthGuard /me result","data":{"status":401,"pathname":"/login","t":1770823568991},"timestamp":1770823568991}
+{"hypothesisId":"C,D","location":"login/page.tsx:after 200","message":"login 200","data":{"apiBase":"http://localhost:8000","t":1770823572433},"timestamp":1770823572433}
+{"hypothesisId":"D","location":"login/page.tsx:before nav","message":"before location.href","data":{"t":1770823572534},"timestamp":1770823572534}
+{"hypothesisId":"C,D,E","location":"auth-guard.tsx:useEffect","message":"AuthGuard fetch /me","data":{"meUrl":"http://localhost:8000/api/auth/me","pathname":"/","t":1770823573031},"timestamp":1770823573031}
+{"hypothesisId":"C,D,E","location":"auth-guard.tsx:useEffect","message":"AuthGuard fetch /me","data":{"meUrl":"http://localhost:8000/api/auth/me","pathname":"/","t":1770823573033},"timestamp":1770823573033}
+{"hypothesisId":"C,E","location":"auth-guard.tsx:me response","message":"AuthGuard /me result","data":{"status":401,"pathname":"/","t":1770823573036},"timestamp":1770823573036}
+{"hypothesisId":"C,E","location":"auth-guard.tsx:me response","message":"AuthGuard /me result","data":{"status":401,"pathname":"/","t":1770823573037},"timestamp":1770823573037}
+{"hypothesisId":"C,D,E","location":"auth-guard.tsx:useEffect","message":"AuthGuard fetch /me","data":{"meUrl":"http://localhost:8000/api/auth/me","pathname":"/login","t":1770823573046},"timestamp":1770823573046}
+{"hypothesisId":"C,E","location":"auth-guard.tsx:me response","message":"AuthGuard /me result","data":{"status":401,"pathname":"/login","t":1770823573050},"timestamp":1770823573050}
+{"hypothesisId":"C,D,E","location":"auth-guard.tsx:useEffect","message":"AuthGuard fetch /me","data":{"meUrl":"http://localhost:8000/api/auth/me","pathname":"/login","t":1770823801041},"timestamp":1770823801041}
+{"hypothesisId":"C,D,E","location":"auth-guard.tsx:useEffect","message":"AuthGuard fetch /me","data":{"meUrl":"http://localhost:8000/api/auth/me","pathname":"/login","t":1770823801043},"timestamp":1770823801043}
+{"hypothesisId":"C,E","location":"auth-guard.tsx:me response","message":"AuthGuard /me result","data":{"status":401,"pathname":"/login","t":1770823801048},"timestamp":1770823801048}
+{"hypothesisId":"C,E","location":"auth-guard.tsx:me response","message":"AuthGuard /me result","data":{"status":401,"pathname":"/login","t":1770823801054},"timestamp":1770823801054}
+{"hypothesisId":"C,D,E","location":"auth-guard.tsx:useEffect","message":"AuthGuard fetch /me","data":{"meUrl":"http://localhost:8000/api/auth/me","pathname":"/login","t":1770823803744},"timestamp":1770823803744}
+{"hypothesisId":"C,D,E","location":"auth-guard.tsx:useEffect","message":"AuthGuard fetch /me","data":{"meUrl":"http://localhost:8000/api/auth/me","pathname":"/login","t":1770823803745},"timestamp":1770823803745}
+{"hypothesisId":"C,E","location":"auth-guard.tsx:me response","message":"AuthGuard /me result","data":{"status":401,"pathname":"/login","t":1770823803766},"timestamp":1770823803766}
+{"hypothesisId":"C,E","location":"auth-guard.tsx:me response","message":"AuthGuard /me result","data":{"status":401,"pathname":"/login","t":1770823803767},"timestamp":1770823803767}
+{"hypothesisId":"C,D","location":"login/page.tsx:after 200","message":"login 200","data":{"apiBase":"http://localhost:8000","t":1770823806758},"timestamp":1770823806758}
+{"hypothesisId":"D","location":"login/page.tsx:before nav","message":"before location.href","data":{"t":1770823806861},"timestamp":1770823806861}
+{"hypothesisId":"C,D,E","location":"auth-guard.tsx:useEffect","message":"AuthGuard fetch /me","data":{"meUrl":"http://localhost:8000/api/auth/me","pathname":"/login","t":1770823807501},"timestamp":1770823807501}
+{"hypothesisId":"C,D,E","location":"auth-guard.tsx:useEffect","message":"AuthGuard fetch /me","data":{"meUrl":"http://localhost:8000/api/auth/me","pathname":"/login","t":1770823807503},"timestamp":1770823807503}
+{"hypothesisId":"C,E","location":"auth-guard.tsx:me response","message":"AuthGuard /me result","data":{"status":401,"pathname":"/login","t":1770823807506},"timestamp":1770823807506}
+{"hypothesisId":"C,E","location":"auth-guard.tsx:me response","message":"AuthGuard /me result","data":{"status":401,"pathname":"/login","t":1770823807507},"timestamp":1770823807507}
+{"hypothesisId":"C,D","location":"login/page.tsx:after 200","message":"login 200","data":{"apiBase":"http://localhost:8000","t":1770824719039},"timestamp":1770824719039}
+{"hypothesisId":"D","location":"login/page.tsx:before nav","message":"before location.href","data":{"t":1770824719142},"timestamp":1770824719142}

@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     attachments_dir: str = Field(default="/data/attachments", alias="ATTACHMENTS_DIR")
     secret_key: str = Field(default="change-me", alias="SECRET_KEY")
     cors_origins: str = Field(
-        default="http://localhost:3000,http://127.0.0.1:3000",
+        default="http://localhost:3000,http://127.0.0.1:3000,http://192.168.65.1:3000",
         alias="CORS_ORIGINS",
     )
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")

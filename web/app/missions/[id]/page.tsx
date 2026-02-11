@@ -35,6 +35,7 @@ import {
   type SeverityLevel,
   type VulnLike,
 } from "../../lib/severity";
+import { Globe, TriangleAlert, Tag, CheckSquare, FileText } from "lucide-react";
 
 type Subnet = {
   id: string;
@@ -172,10 +173,10 @@ type SelectedNode =
   | { type: "todos" }
   | { type: "tags" }
   | { type: "todo"; id: string }
-  | { type: "jobs" }
   | null;
 
 const ICON = { ports: "▸", vulns: "⚠", notes: "≡" } as const;
+const navIconStyle = { width: 16, height: 16, opacity: 0.9, flexShrink: 0 };
 
 function isUnresolvedHost(h: { ip: string }): boolean {
   return String(h.ip || "").toLowerCase() === "unresolved";
@@ -2828,9 +2829,6 @@ export default function MissionDetailPage() {
         </div>
       );
     }
-    if (selectedNode.type === "jobs")
-      return <div style={{ padding: 24, color: "var(--text-muted)" }}>Jobs (coming soon)</div>;
-
     if (selectedNode.type === "subnet") {
       const subnet = subnets.find((s) => s.id === selectedNode.id);
       if (!subnet) return null;
@@ -3332,6 +3330,7 @@ export default function MissionDetailPage() {
             }}
           >
             <span style={{ width: 14 }}>{expanded.has("scope") ? "▼" : "▶"}</span>
+            <Globe style={navIconStyle} />
             Scope
           </div>
           {expanded.has("scope") && (
@@ -3530,6 +3529,7 @@ export default function MissionDetailPage() {
             }}
           >
             <span style={{ width: 14 }}>{expanded.has("vulnerabilities") ? "▼" : "▶"}</span>
+            <TriangleAlert style={navIconStyle} />
             Vulnerabilities
             {vulnDefinitionsLoading && <Spinner />}
             {vulnDefinitionsLoaded && !vulnDefinitionsLoading && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({vulnDefinitions.length})</span>}
@@ -3684,45 +3684,37 @@ export default function MissionDetailPage() {
               )}
             </>
           )}
-          <div
-            className={"theme-tree-node" + (selectedNode?.type === "custom-reports" ? " selected" : "")}
-            style={{ ...nodeStyle(0), paddingLeft: 12 }}
-            onClick={(ev) => {
-              ev.stopPropagation();
-              toggleExpand("custom-reports");
-              setSelectedNode({ type: "custom-reports" });
-            }}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setContextMenu({
-                x: e.clientX,
-                y: e.clientY,
-                items: [{ label: "Expand/Collapse", onClick: () => toggleExpandCollapse("custom-reports") }],
-              });
-            }}
-          >
-            <span style={{ width: 14 }}>{expanded.has("custom-reports") ? "▼" : "▶"}</span>
-            Custom Reports
-          </div>
-          {expanded.has("custom-reports") && (
-            <>
-              {savedReports.map((sr) => {
-                const isSel = selectedNode?.type === "saved-report" && selectedNode.id === sr.id;
+          <div>
+            <div
+              className={"theme-tree-node" + (selectedNode?.type === "todos" ? " selected" : "")}
+              style={{ ...nodeStyle(0), paddingLeft: 12 }}
+              onClick={(ev) => {
+                ev.stopPropagation();
+                toggleExpand("todos-root");
+                setSelectedNode({ type: "todos" });
+              }}
+            >
+              <span style={{ width: 14 }}>{expanded.has("todos-root") ? "▼" : "▶"}</span>
+              <CheckSquare style={navIconStyle} />
+              Todos
+              {projectTodos.length > 0 && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({projectTodos.length})</span>}
+            </div>
+            {expanded.has("todos-root") &&
+              projectTodos.map((t) => {
+                const isSel = selectedNode?.type === "todo" && selectedNode.id === t.id;
                 return (
                   <div
-                    key={sr.id}
+                    key={t.id}
                     className={"theme-tree-node" + (isSel ? " selected" : "")}
-                    style={{ ...nodeStyle(1), paddingLeft: 12, color: "var(--text-muted)" }}
-                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "saved-report", id: sr.id }); }}
+                    style={{ ...nodeStyle(1), paddingLeft: 12, color: "var(--text-muted)", textDecoration: t.status === "done" ? "line-through" : undefined }}
+                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "todo", id: t.id }); }}
                   >
-                    <span style={{ width: 14 }}>▸</span>
-                    {sr.name}
+                    <span style={{ width: 14 }}>•</span>
+                    {t.title}
                   </div>
                 );
               })}
-            </>
-          )}
+          </div>
           <div>
             <div
               className={"theme-tree-node" + (selectedNode?.type === "tags" ? " selected" : "")}
@@ -3734,7 +3726,7 @@ export default function MissionDetailPage() {
               }}
             >
               <span style={{ width: 14 }}>{expanded.has("tags-root") ? "▼" : "▶"}</span>
-              <span style={{ opacity: 0.9 }}>🏷</span>
+              <Tag style={navIconStyle} />
               Tags
               {projectTags.length > 0 && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({projectTags.length})</span>}
             </div>
@@ -3766,40 +3758,46 @@ export default function MissionDetailPage() {
               </>
             )}
           </div>
-          <div>
-            <div
-              className={"theme-tree-node" + (selectedNode?.type === "todos" ? " selected" : "")}
-              style={{ ...nodeStyle(0), paddingLeft: 12 }}
-              onClick={(ev) => {
-                ev.stopPropagation();
-                toggleExpand("todos-root");
-                setSelectedNode({ type: "todos" });
-              }}
-            >
-              <span style={{ width: 14 }}>{expanded.has("todos-root") ? "▼" : "▶"}</span>
-              Todos
-              {projectTodos.length > 0 && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({projectTodos.length})</span>}
-            </div>
-            {expanded.has("todos-root") &&
-              projectTodos.map((t) => {
-                const isSel = selectedNode?.type === "todo" && selectedNode.id === t.id;
+          <div
+            className={"theme-tree-node" + (selectedNode?.type === "custom-reports" ? " selected" : "")}
+            style={{ ...nodeStyle(0), paddingLeft: 12 }}
+            onClick={(ev) => {
+              ev.stopPropagation();
+              toggleExpand("custom-reports");
+              setSelectedNode({ type: "custom-reports" });
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setContextMenu({
+                x: e.clientX,
+                y: e.clientY,
+                items: [{ label: "Expand/Collapse", onClick: () => toggleExpandCollapse("custom-reports") }],
+              });
+            }}
+          >
+            <span style={{ width: 14 }}>{expanded.has("custom-reports") ? "▼" : "▶"}</span>
+            <FileText style={navIconStyle} />
+            Custom Reports
+          </div>
+          {expanded.has("custom-reports") && (
+            <>
+              {savedReports.map((sr) => {
+                const isSel = selectedNode?.type === "saved-report" && selectedNode.id === sr.id;
                 return (
                   <div
-                    key={t.id}
+                    key={sr.id}
                     className={"theme-tree-node" + (isSel ? " selected" : "")}
-                    style={{ ...nodeStyle(1), paddingLeft: 12, color: "var(--text-muted)", textDecoration: t.status === "done" ? "line-through" : undefined }}
-                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "todo", id: t.id }); }}
+                    style={{ ...nodeStyle(1), paddingLeft: 12, color: "var(--text-muted)" }}
+                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "saved-report", id: sr.id }); }}
                   >
-                    <span style={{ width: 14 }}>•</span>
-                    {t.title}
+                    <span style={{ width: 14 }}>▸</span>
+                    {sr.name}
                   </div>
                 );
               })}
-          </div>
-          <div className={"theme-tree-node" + (selectedNode?.type === "jobs" ? " selected" : "")} style={{ ...nodeStyle(0), paddingLeft: 12 }} onClick={() => setSelectedNode({ type: "jobs" })}>
-            <span style={{ width: 14 }}>▶</span>
-            Jobs
-          </div>
+            </>
+          )}
         </aside>
         <div
           role="separator"

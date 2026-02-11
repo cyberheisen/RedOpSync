@@ -61,16 +61,23 @@ def login(
         user.username,
         user.role.value if hasattr(user.role, "value") else user.role,
     )
-    # On HTTPS or localhost: Secure + SameSite=None so cookie is sent cross-origin (e.g. :3000 -> :8000).
-    # On HTTP (e.g. another machine at http://ip:8000): Secure=False so the cookie is stored; SameSite=Lax
-    # still sends it for same host different port (same site).
-    secure = _is_secure_request(request)
+    # When not behind HTTPS (no x-forwarded-proto=https): use Secure=False and SameSite=Lax so the cookie
+    # is stored and sent (e.g. Docker dev at localhost). SameSite=None on HTTP causes browsers to reject the cookie.
+    x_proto = (request.headers.get("x-forwarded-proto") or "").strip().lower()
+    on_https = x_proto == "https"
+    cookie_secure = on_https
+    cookie_samesite = "none" if on_https else "lax"
+    import logging
+    logging.getLogger(__name__).info(
+        "login set_cookie: host=%r secure=%s samesite=%s",
+        request.headers.get("host"), cookie_secure, cookie_samesite,
+    )
     response.set_cookie(
         key=TOKEN_COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=secure,
-        samesite="none" if secure else "lax",
+        secure=cookie_secure,
+        samesite=cookie_samesite,
         max_age=settings.jwt_expire_hours * 3600,
         path="/",
     )
@@ -80,11 +87,18 @@ def login(
     return LoginResponse(user=UserRead(id=user.id, username=user.username, role=_role_str(user.role)))
 
 
+def _cookie_opts(request: Request) -> tuple[bool, str]:
+    """(secure, samesite) for cookie. Lax + not Secure when not on HTTPS."""
+    x_proto = (request.headers.get("x-forwarded-proto") or "").strip().lower()
+    on_https = x_proto == "https"
+    return (on_https, "none" if on_https else "lax")
+
+
 @router.post("/logout")
 def logout(request: Request, response: Response):
-    secure = _is_secure_request(request)
+    secure, samesite = _cookie_opts(request)
     response.delete_cookie(
-        key=TOKEN_COOKIE_NAME, path="/", secure=secure, samesite="none" if secure else "lax"
+        key=TOKEN_COOKIE_NAME, path="/", secure=secure, samesite=samesite
     )
     return {"ok": True}
 

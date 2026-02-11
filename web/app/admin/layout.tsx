@@ -3,24 +3,27 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
+import { User, FolderOpen, Lock, Package, Settings, ScrollText } from "lucide-react";
 import { apiUrl } from "../lib/api";
 import { Logo } from "../components/logo";
 
-type User = { id: string; username: string; role: string } | null;
+type UserType = { id: string; username: string; role: string } | null;
 
-const navItems = [
-  { href: "/admin/users", label: "Users", icon: "👤" },
-  { href: "/admin/missions", label: "Missions", icon: "📁" },
-  { href: "/admin/locks", label: "Locks", icon: "🔒" },
-  { href: "/admin/imports-exports", label: "Imports / Exports", icon: "📦" },
-  { href: "/admin/system", label: "System", icon: "⚙️" },
-  { href: "/admin/audit", label: "Audit", icon: "📋" },
+const navIconStyle = { width: 18, height: 18, flexShrink: 0 };
+
+const navItems: { href: string; label: string; Icon: React.ComponentType<{ style?: React.CSSProperties }> }[] = [
+  { href: "/admin/users", label: "Users", Icon: User },
+  { href: "/admin/missions", label: "Missions", Icon: FolderOpen },
+  { href: "/admin/locks", label: "Locks", Icon: Lock },
+  { href: "/admin/imports-exports", label: "Imports / Exports", Icon: Package },
+  { href: "/admin/system", label: "System", Icon: Settings },
+  { href: "/admin/audit", label: "Audit", Icon: ScrollText },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [user, setUser] = useState<User>(null);
+  const [user, setUser] = useState<UserType>(null);
   const [loading, setLoading] = useState(true);
   const [unauthorized, setUnauthorized] = useState(false);
 
@@ -114,6 +117,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           {navItems.map((item) => {
             const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
             const isDestructive = item.label === "System";
+            const Icon = item.Icon;
             return (
               <Link
                 key={item.href}
@@ -131,7 +135,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   transition: "all 0.15s",
                 }}
               >
-                <span style={{ fontSize: 16 }}>{item.icon}</span>
+                <Icon style={navIconStyle} />
                 <span style={{ color: isDestructive && !isActive ? "var(--accent)" : undefined }}>
                   {item.label}
                 </span>

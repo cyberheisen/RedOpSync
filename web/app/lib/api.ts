@@ -1,10 +1,23 @@
 /**
- * API base URL for browser requests. Must be reachable from the browser
- * (e.g. http://localhost:8000 when using Docker port mapping).
+ * API base URL for browser requests. In the browser we use the same hostname as the page
+ * so the session cookie is same-origin (e.g. http://192.168.65.1:3000 -> http://192.168.65.1:8000).
+ * Otherwise the cookie set by the API host is not sent on subsequent requests.
  */
+function getApiPort(): string {
+  const base = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.API_BASE_URL || "http://localhost:8000";
+  try {
+    const u = new URL(base);
+    return u.port || (u.protocol === "https:" ? "443" : "80");
+  } catch {
+    return "8000";
+  }
+}
+
 export function getApiBase(): string {
-  if (typeof window !== "undefined") {
-    return process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+  if (typeof window !== "undefined" && window.location?.hostname) {
+    const port = getApiPort();
+    const protocol = window.location.protocol;
+    return `${protocol}//${window.location.hostname}:${port}`;
   }
   return process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 }
