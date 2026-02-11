@@ -8,9 +8,9 @@ export const metadata = {
 };
 
 const themeStyles = `
-:root{--bg:#0B0D10;--bg-panel:#11151B;--bg-elevated:#161B24;--text:#e2e8f0;--text-muted:#8b95a5;--text-dim:#6b7280;--accent:#E10600;--accent-dim:rgba(225,6,0,.6);--accent-bg:rgba(225,6,0,.12);--tree-bg:#0f1218;--tree-hover:#1a1f2a;--tree-selected-bg:rgba(225,6,0,.15);--tree-selected-border:var(--accent);--border:#252b36;--border-subtle:#1c2129;--input-bg:#161B24;--input-border:#252b36;--input-focus:var(--accent);--btn-bg:#1a1f2a;--btn-border:#252b36;--btn-hover:#252b36;--btn-primary-bg:var(--accent);--btn-primary-hover:#c90500;--error:#fc8181;--error-bg:rgba(252,129,129,.12);--lock-bg:rgba(225,6,0,.1);--lock-border:var(--accent-dim)}
+:root{--font-sans:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;--bg:#0B0D10;--bg-panel:#11151B;--bg-elevated:#161B24;--text:#e2e8f0;--text-muted:#8b95a5;--text-dim:#6b7280;--accent:#E10600;--accent-dim:rgba(225,6,0,.6);--accent-bg:rgba(225,6,0,.12);--tree-bg:#0f1218;--tree-hover:#1a1f2a;--tree-selected-bg:rgba(225,6,0,.15);--tree-selected-border:var(--accent);--border:#252b36;--border-subtle:#1c2129;--input-bg:#161B24;--input-border:#252b36;--input-focus:var(--accent);--btn-bg:#1a1f2a;--btn-border:#252b36;--btn-hover:#252b36;--btn-primary-bg:var(--accent);--btn-primary-hover:#c90500;--error:#fc8181;--error-bg:rgba(252,129,129,.12);--lock-bg:rgba(225,6,0,.1);--lock-border:var(--accent-dim)}
 *{box-sizing:border-box}
-body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
+body{margin:0;font-family:var(--font-sans);background:var(--bg);color:var(--text)}
 .theme-btn{padding:8px 16px;font-size:14px;border-radius:6px;cursor:pointer;border:1px solid var(--btn-border);background:var(--btn-bg);color:var(--text);transition:background .15s,border-color .15s}
 .theme-btn:hover:not(:disabled){background:var(--btn-hover)}
 .theme-btn:disabled{cursor:not-allowed;opacity:.6}

@@ -84,7 +84,7 @@ export default function MissionsPage() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  const handleCreate = async (name: string, description: string) => {
+  const handleCreate = async (name: string, description: string, startDate: string, endDate: string) => {
     setCreateError("");
     setCreating(true);
     try {
@@ -95,6 +95,8 @@ export default function MissionsPage() {
         body: JSON.stringify({
           name: name.trim(),
           description: description.trim() || null,
+          start_date: startDate || null,
+          end_date: endDate || null,
           countdown_red_days_default: 7,
         }),
       });

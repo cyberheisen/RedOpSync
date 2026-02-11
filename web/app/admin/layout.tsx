@@ -56,9 +56,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     router.replace("/login");
   }
 
+  const fontFamily = "var(--font-sans)";
   if (loading) {
     return (
-      <div style={{ padding: 48, textAlign: "center", color: "var(--text-muted)" }}>
+      <div style={{ padding: 48, textAlign: "center", color: "var(--text-muted)", fontFamily }}>
         Checking admin access…
       </div>
     );
@@ -66,7 +67,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   if (unauthorized) {
     return (
-      <div style={{ padding: 48, textAlign: "center" }}>
+      <div style={{ padding: 48, textAlign: "center", fontFamily }}>
         <h1 style={{ color: "var(--error)", marginBottom: 16 }}>Access Denied</h1>
         <p style={{ color: "var(--text-muted)", marginBottom: 24 }}>
           You do not have permission to access the Admin section.
@@ -79,7 +80,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh" }}>
+    <div style={{ display: "flex", minHeight: "100vh", fontFamily }}>
       {/* Admin Sidebar */}
       <aside
         style={{
@@ -89,6 +90,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           display: "flex",
           flexDirection: "column",
           flexShrink: 0,
+          fontFamily,
         }}
       >
         <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
@@ -173,7 +175,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       </aside>
 
       {/* Main Content */}
-      <main style={{ flex: 1, backgroundColor: "var(--bg)", overflow: "auto" }}>
+      <main style={{ flex: 1, backgroundColor: "var(--bg)", overflow: "auto", fontFamily }}>
         {children}
       </main>
     </div>

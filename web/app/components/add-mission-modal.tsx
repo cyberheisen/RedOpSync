@@ -3,7 +3,7 @@
 type Props = {
   error?: string;
   onClose: () => void;
-  onSubmit: (name: string, description: string) => Promise<void>;
+  onSubmit: (name: string, description: string, startDate: string, endDate: string) => Promise<void>;
 };
 
 export function AddMissionModal({ error, onClose, onSubmit }: Props) {
@@ -12,8 +12,10 @@ export function AddMissionModal({ error, onClose, onSubmit }: Props) {
     const form = e.currentTarget;
     const name = (form.elements.namedItem("name") as HTMLInputElement).value.trim();
     const description = (form.elements.namedItem("description") as HTMLInputElement).value.trim();
+    const startDate = (form.elements.namedItem("start_date") as HTMLInputElement).value;
+    const endDate = (form.elements.namedItem("end_date") as HTMLInputElement).value;
     if (!name) return;
-    await onSubmit(name, description);
+    await onSubmit(name, description, startDate, endDate);
     onClose();
   };
 
@@ -48,9 +50,17 @@ export function AddMissionModal({ error, onClose, onSubmit }: Props) {
             <label style={{ display: "block", marginBottom: 4 }}>Name</label>
             <input name="name" type="text" required placeholder="e.g. Acme Corp engagement" className="theme-input" />
           </div>
-          <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: 12 }}>
             <label style={{ display: "block", marginBottom: 4 }}>Description (optional)</label>
             <input name="description" type="text" placeholder="Brief description" className="theme-input" />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: "block", marginBottom: 4 }}>Start date (optional)</label>
+            <input name="start_date" type="date" className="theme-input" />
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", marginBottom: 4 }}>End date (optional)</label>
+            <input name="end_date" type="date" className="theme-input" />
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button type="button" className="theme-btn theme-btn-ghost" onClick={onClose}>Cancel</button>
