@@ -2868,11 +2868,14 @@ export default function MissionDetailPage() {
       );
     }
 
-    if (selectedNode.type === "host" || selectedNode.type === "host-ports") {
-      const host = hosts.find((h) => h.id === (selectedNode.type === "host" ? selectedNode.id : selectedNode.hostId));
+    if (selectedNode.type === "host") {
+      const host = hosts.find((h) => h.id === selectedNode.id);
       if (!host) return null;
       const ports = portsByHost[host.id] ?? [];
-      const showPortList = selectedNode.type === "host-ports";
+      const vulns = vulnsByHost[host.id] ?? [];
+      const hostNotes = projectNotes.filter((n) => n.target_type === "host" && n.target_id === host.id);
+      const hostTodos = projectTodos.filter((t) => t.target_type === "host" && t.target_id === host.id);
+      const hostTags = getItemTagsFor("host", host.id);
       return (
         <div style={{ padding: 24 }}>
           <div style={{ marginBottom: 8 }}>
@@ -2890,25 +2893,116 @@ export default function MissionDetailPage() {
               Locked by: {currentHostLock.locked_by_username ?? "Unknown"}
             </p>
           )}
-          {showPortList && (
-            <>
-              <h3 style={{ fontSize: "1rem", marginBottom: 12 }}>Ports</h3>
-              {portsLoading.has(host.id) ? (
-                <p style={{ color: "var(--text-muted)" }}>Loading…</p>
+          <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Ports</h3>
+          {portsLoading.has(host.id) ? (
+            <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>Loading…</p>
+          ) : (
+            <ul style={{ listStyle: "none", padding: 0, margin: "0 0 16px" }}>
+              {ports.length === 0 ? (
+                <li style={{ color: "var(--text-muted)" }}>No ports.</li>
               ) : (
-                <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-                  {ports.map((p) => (
-                    <li key={p.id} style={{ marginBottom: 4 }}>
-                      <button type="button" onClick={() => setSelectedNode({ type: "port", id: p.id })} className="theme-btn theme-btn-ghost" style={{ background: "none", border: "none", padding: "4px 0", textAlign: "left" }}>
-                        {p.number}/{p.protocol}{p.service_name ? ` (${p.service_name})` : ""}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                ports.map((p) => (
+                  <li key={p.id} style={{ marginBottom: 4 }}>
+                    <button type="button" onClick={() => setSelectedNode({ type: "port", id: p.id })} className="theme-btn theme-btn-ghost" style={{ background: "none", border: "none", padding: "4px 0", textAlign: "left" }}>
+                      {p.number}/{p.protocol}{p.service_name ? ` (${p.service_name})` : ""}
+                    </button>
+                  </li>
+                ))
               )}
-              {!portsLoading.has(host.id) && ports.length === 0 && <p style={{ color: "var(--text-muted)" }}>No ports.</p>}
-            </>
+            </ul>
           )}
+          <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Vulnerabilities</h3>
+          {vulnsLoading.has(host.id) ? (
+            <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>Loading…</p>
+          ) : vulns.length === 0 ? (
+            <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>No vulnerabilities on this host.</p>
+          ) : (
+            <ul style={{ listStyle: "none", padding: 0, margin: "0 0 16px" }}>
+              {[...vulns].sort(compareBySeverity).map((v) => (
+                <li
+                  key={v.id}
+                  style={{ marginBottom: 4, cursor: "pointer" }}
+                  onClick={() => setSelectedNode({ type: "vuln-instance", id: v.id })}
+                >
+                  <span style={{ color: getSeverityColor(getEffectiveSeverity(v)) }}>{v.definition_title ?? v.id}</span>{" "}
+                  <span style={{ color: "var(--text-muted)", fontSize: 12 }}>[{v.status}]</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Notes</h3>
+          {hostNotes.length === 0 ? (
+            <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>No notes on this host.</p>
+          ) : (
+            <ul style={{ listStyle: "none", padding: 0, margin: "0 0 16px" }}>
+              {hostNotes.map((n) => {
+                const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
+                return (
+                  <li key={n.id} style={{ marginBottom: 4 }}>
+                    <button type="button" onClick={() => setSelectedNode({ type: "note", id: n.id, target: "host", targetId: host.id })} className="theme-btn theme-btn-ghost" style={{ background: "none", border: "none", padding: "4px 0", textAlign: "left", fontStyle: "italic" }}>
+                      {noteTitle}{noteTitle.length >= 40 ? "…" : ""}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Todos</h3>
+          {hostTodos.length === 0 ? (
+            <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>No todos on this host.</p>
+          ) : (
+            <ul style={{ listStyle: "none", padding: 0, margin: "0 0 16px" }}>
+              {hostTodos.map((t) => (
+                <li key={t.id} style={{ marginBottom: 4, textDecoration: t.status === "done" ? "line-through" : undefined, color: "var(--text-muted)" }}>
+                  <button type="button" onClick={() => setSelectedNode({ type: "todo", id: t.id })} className="theme-btn theme-btn-ghost" style={{ background: "none", border: "none", padding: "4px 0", textAlign: "left" }}>
+                    {t.title}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Tags</h3>
+          {hostTags.length === 0 ? (
+            <p style={{ color: "var(--text-muted)" }}>No tags on this host.</p>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {hostTags.map((it) => (
+                <span key={it.id} style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid var(--border)", fontSize: 12, color: it.tag_color ?? "var(--text-muted)" }}>
+                  {it.tag_name ?? ""}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (selectedNode.type === "host-ports") {
+      const host = hosts.find((h) => h.id === selectedNode.hostId);
+      if (!host) return null;
+      const ports = portsByHost[host.id] ?? [];
+      return (
+        <div style={{ padding: 24 }}>
+          <div style={{ marginBottom: 8 }}>
+            <ReachabilityDot status={getEffectiveHostStatus(host)} />
+            <span style={{ marginLeft: 8, fontSize: "1.25rem", fontWeight: 600 }}>{host.ip}</span>
+          </div>
+          {host.dns_name && <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>{host.dns_name}</p>}
+          <h3 style={{ fontSize: "1rem", marginBottom: 12 }}>Ports</h3>
+          {portsLoading.has(host.id) ? (
+            <p style={{ color: "var(--text-muted)" }}>Loading…</p>
+          ) : (
+            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+              {ports.map((p) => (
+                <li key={p.id} style={{ marginBottom: 4 }}>
+                  <button type="button" onClick={() => setSelectedNode({ type: "port", id: p.id })} className="theme-btn theme-btn-ghost" style={{ background: "none", border: "none", padding: "4px 0", textAlign: "left" }}>
+                    {p.number}/{p.protocol}{p.service_name ? ` (${p.service_name})` : ""}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {!portsLoading.has(host.id) && ports.length === 0 && <p style={{ color: "var(--text-muted)" }}>No ports.</p>}
         </div>
       );
     }
