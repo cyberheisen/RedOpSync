@@ -51,6 +51,7 @@ type Host = {
   ip: string;
   dns_name: string | null;
   status: string | null;
+  whois_data?: Record<string, unknown> | null;
 };
 
 type Port = {
@@ -157,6 +158,7 @@ type SelectedNode =
   | { type: "subnet"; id: string }
   | { type: "host"; id: string }
   | { type: "host-ports"; hostId: string }
+  | { type: "host-whois"; hostId: string }
   | { type: "port"; id: string }
   | { type: "port-evidence"; id: string; portId: string; hostId: string }
   | { type: "host-vulnerabilities"; hostId: string }
@@ -1050,7 +1052,7 @@ export default function MissionDetailPage() {
   }, [mission?.id, mission?.sort_mode, hostIds, loadPortsForHost, loadVulnsForHost]);
 
   const selectedHost =
-    selectedNode?.type === "host" || selectedNode?.type === "host-ports" || selectedNode?.type === "host-vulnerabilities" || (selectedNode?.type === "note" && selectedNode.target === "host")
+    selectedNode?.type === "host" || selectedNode?.type === "host-ports" || selectedNode?.type === "host-whois" || selectedNode?.type === "host-vulnerabilities" || (selectedNode?.type === "note" && selectedNode.target === "host")
       ? hosts.find((h) =>
           selectedNode!.type === "note"
             ? selectedNode.targetId === h.id
@@ -1742,7 +1744,7 @@ export default function MissionDetailPage() {
       setNotesByPortLoaded((prev) => { const n = new Set(prev); portIds.forEach((id) => n.delete(id)); return n; });
       setPortsLoaded((prev) => { const n = new Set(prev); n.delete(hostId); return n; });
       setVulnsLoaded((prev) => { const n = new Set(prev); n.delete(hostId); return n; });
-      if (selectedNode && (selectedNode.type === "host" || selectedNode.type === "host-ports" || selectedNode.type === "host-vulnerabilities") && (selectedNode.type === "host" ? selectedNode.id : selectedNode.hostId) === hostId) setSelectedNode(null);
+      if (selectedNode && (selectedNode.type === "host" || selectedNode.type === "host-ports" || selectedNode.type === "host-whois" || selectedNode.type === "host-vulnerabilities") && (selectedNode.type === "host" ? selectedNode.id : selectedNode.hostId) === hostId) setSelectedNode(null);
       if (selectedNode?.type === "port" && portsByHost[hostId]?.some((p) => p.id === selectedNode.id)) setSelectedNode(null);
       if (selectedNode?.type === "port-evidence" && portIds.includes(selectedNode.portId)) setSelectedNode(null);
       if (selectedNode?.type === "note" && selectedNode.target === "host" && selectedNode.targetId === hostId) setSelectedNode(null);
@@ -1781,7 +1783,7 @@ export default function MissionDetailPage() {
       setNotesBySubnet((prev) => { const next = { ...prev }; delete next[subnetId]; return next; });
       setNotesBySubnetLoaded((prev) => { const n = new Set(prev); n.delete(subnetId); return n; });
       if (selectedNode?.type === "subnet" && selectedNode.id === subnetId) setSelectedNode(null);
-      if (selectedNode && (selectedNode.type === "host" || selectedNode.type === "host-ports" || selectedNode.type === "host-vulnerabilities") && hostIdsToRemove.has(selectedNode.type === "host" ? selectedNode.id : selectedNode.hostId)) setSelectedNode(null);
+      if (selectedNode && (selectedNode.type === "host" || selectedNode.type === "host-ports" || selectedNode.type === "host-whois" || selectedNode.type === "host-vulnerabilities") && hostIdsToRemove.has(selectedNode.type === "host" ? selectedNode.id : selectedNode.hostId)) setSelectedNode(null);
       if (selectedNode?.type === "port" && portIdsToRemove.has(selectedNode.id)) setSelectedNode(null);
       if (selectedNode?.type === "port-evidence" && portIdsToRemove.has(selectedNode.portId)) setSelectedNode(null);
       if (selectedNode?.type === "note" && (selectedNode.targetId === subnetId || (selectedNode.target === "host" && hostIdsToRemove.has(selectedNode.targetId)))) setSelectedNode(null);
@@ -2167,6 +2169,19 @@ export default function MissionDetailPage() {
                 </div>
               );
             })}
+            {h.whois_data && Object.keys(h.whois_data).length > 0 && (
+              <div
+                className={"theme-tree-node" + (selectedNode?.type === "host-whois" && selectedNode.hostId === h.id ? " selected" : "")}
+                style={{ ...nodeStyle(baseDepth + 1), color: "var(--text-muted)" }}
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  setSelectedNode({ type: "host-whois", hostId: h.id });
+                }}
+              >
+                <span style={{ width: 14 }}>▸</span>
+                <span style={{ opacity: 0.9 }}>Whois</span>
+              </div>
+            )}
             <div
               className={"theme-tree-node" + (selectedNode?.type === "host-ports" && selectedNode.hostId === h.id ? " selected" : "")}
               style={nodeStyle(baseDepth + 1)}
@@ -2963,15 +2978,46 @@ export default function MissionDetailPage() {
           )}
           <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Tags</h3>
           {hostTags.length === 0 ? (
-            <p style={{ color: "var(--text-muted)" }}>No tags on this host.</p>
+            <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>No tags on this host.</p>
           ) : (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
               {hostTags.map((it) => (
                 <span key={it.id} style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid var(--border)", fontSize: 12, color: it.tag_color ?? "var(--text-muted)" }}>
                   {it.tag_name ?? ""}
                 </span>
               ))}
             </div>
+          )}
+          {host.whois_data && Object.keys(host.whois_data).length > 0 && (
+            <>
+              <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Network / Whois</h3>
+              <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.5 }}>
+                {host.whois_data.asn_description != null && (
+                  <div style={{ marginBottom: 4 }}><strong style={{ color: "var(--text)" }}>Network:</strong> {String(host.whois_data.asn_description)}</div>
+                )}
+                {host.whois_data.network_name != null && host.whois_data.network_name !== host.whois_data.asn_description && (
+                  <div style={{ marginBottom: 4 }}><strong style={{ color: "var(--text)" }}>Name:</strong> {String(host.whois_data.network_name)}</div>
+                )}
+                {host.whois_data.asn != null && (
+                  <div style={{ marginBottom: 4 }}><strong style={{ color: "var(--text)" }}>ASN:</strong> {String(host.whois_data.asn)}</div>
+                )}
+                {(host.whois_data.asn_country != null || host.whois_data.country != null) && (
+                  <div style={{ marginBottom: 4 }}>
+                    <strong style={{ color: "var(--text)" }}>Country:</strong>{" "}
+                    {[host.whois_data.asn_country, host.whois_data.country].filter(Boolean).join(" / ")}
+                  </div>
+                )}
+                {host.whois_data.cidr != null && (
+                  <div style={{ marginBottom: 4 }}><strong style={{ color: "var(--text)" }}>CIDR:</strong> {String(host.whois_data.cidr)}</div>
+                )}
+                {host.whois_data.network_type != null && (
+                  <div style={{ marginBottom: 4 }}><strong style={{ color: "var(--text)" }}>Type:</strong> {String(host.whois_data.network_type)}</div>
+                )}
+                {host.whois_data.asn_registry != null && (
+                  <div><strong style={{ color: "var(--text)" }}>Registry:</strong> {String(host.whois_data.asn_registry)}</div>
+                )}
+              </div>
+            </>
           )}
         </div>
       );
@@ -3003,6 +3049,50 @@ export default function MissionDetailPage() {
             </ul>
           )}
           {!portsLoading.has(host.id) && ports.length === 0 && <p style={{ color: "var(--text-muted)" }}>No ports.</p>}
+        </div>
+      );
+    }
+
+    if (selectedNode.type === "host-whois") {
+      const host = hosts.find((h) => h.id === selectedNode.hostId);
+      if (!host) return null;
+      const w = host.whois_data;
+      if (!w || Object.keys(w).length === 0) {
+        return (
+          <div style={{ padding: 24 }}>
+            <h2 style={{ margin: "0 0 8px", fontSize: "1.25rem" }}>Whois — {host.ip}</h2>
+            <p style={{ color: "var(--text-muted)" }}>No whois/RDAP data for this host. Import a whois JSON file to populate.</p>
+          </div>
+        );
+      }
+      return (
+        <div style={{ padding: 24 }}>
+          <h2 style={{ margin: "0 0 16px", fontSize: "1.25rem" }}>Whois — {host.ip}</h2>
+          <div style={{ fontSize: 14, color: "var(--text)", lineHeight: 1.6 }}>
+            {w.asn_description != null && (
+              <div style={{ marginBottom: 8 }}><strong>Network:</strong> {String(w.asn_description)}</div>
+            )}
+            {w.network_name != null && w.network_name !== w.asn_description && (
+              <div style={{ marginBottom: 8 }}><strong>Name:</strong> {String(w.network_name)}</div>
+            )}
+            {w.asn != null && (
+              <div style={{ marginBottom: 8 }}><strong>ASN:</strong> {String(w.asn)}</div>
+            )}
+            {(w.asn_country != null || w.country != null) && (
+              <div style={{ marginBottom: 8 }}>
+                <strong>Country:</strong> {[w.asn_country, w.country].filter(Boolean).join(" / ")}
+              </div>
+            )}
+            {w.cidr != null && (
+              <div style={{ marginBottom: 8 }}><strong>CIDR:</strong> {String(w.cidr)}</div>
+            )}
+            {w.network_type != null && (
+              <div style={{ marginBottom: 8 }}><strong>Type:</strong> {String(w.network_type)}</div>
+            )}
+            {w.asn_registry != null && (
+              <div><strong>Registry:</strong> {String(w.asn_registry)}</div>
+            )}
+          </div>
         </div>
       );
     }

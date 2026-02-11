@@ -139,10 +139,10 @@ async def import_scan(
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
     fn = file.filename.lower()
-    if not (fn.endswith(".xml") or fn.endswith(".zip") or fn.endswith(".txt")):
+    if not (fn.endswith(".xml") or fn.endswith(".zip") or fn.endswith(".txt") or fn.endswith(".json")):
         raise HTTPException(
             status_code=400,
-            detail="Unsupported file type. Use Nmap XML (.xml), GoWitness/ZIP (.zip), or plain text (.txt).",
+            detail="Unsupported file type. Use Nmap XML (.xml), GoWitness/ZIP (.zip), plain text (.txt), or whois/RDAP JSON (.json).",
         )
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:

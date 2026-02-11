@@ -5,10 +5,12 @@ Supported formats:
 - Nmap XML (-oX)
 - GoWitness (ZIP with PNG/JPEG and/or JSONL)
 - Plain text (.txt) - one host per line: IP [hostname]
+- Whois/RDAP JSON (.json) - array of { ip, asn, asn_description, ... }
 """
 from __future__ import annotations
 
 import io
+import json
 import zipfile
 from pathlib import Path
 from uuid import UUID
@@ -20,10 +22,24 @@ from app.services.gowitness_parser import parse_gowitness_directory
 from app.services.nmap_import import run_nmap_import as _run_nmap
 from app.services.nmap_parser import detect_nmap_format, parse_nmap_xml
 from app.services.text_import import run_text_import as _run_text
+from app.services.whois_import import parse_whois_json, run_whois_import as _run_whois
 
 IMPORT_FORMAT_NMAP = "nmap"
 IMPORT_FORMAT_GOWITNESS = "gowitness"
 IMPORT_FORMAT_TEXT = "text"
+IMPORT_FORMAT_WHOIS = "whois"
+
+
+def _looks_like_whois_json(content: bytes) -> bool:
+    """True if content is a JSON array of objects with 'ip' (whois/rdap format)."""
+    try:
+        data = json.loads(content.decode("utf-8"))
+        if not isinstance(data, list) or len(data) == 0:
+            return False
+        first = data[0]
+        return isinstance(first, dict) and "ip" in first
+    except Exception:
+        return False
 
 
 def detect_import_format(content: bytes, filename: str) -> tuple[str | None, str]:
@@ -31,10 +47,15 @@ def detect_import_format(content: bytes, filename: str) -> tuple[str | None, str
     Detect import format from file content and filename.
 
     Returns (format, error_message).
-    - format: 'nmap' | 'gowitness' | 'text' | None
+    - format: 'nmap' | 'gowitness' | 'text' | 'whois' | None
     - error_message: empty if format detected, else human-readable error
     """
     fn = (filename or "").lower().strip()
+
+    if fn.endswith(".json"):
+        if _looks_like_whois_json(content):
+            return IMPORT_FORMAT_WHOIS, ""
+        return None, "JSON file must be an array of whois/rdap objects with 'ip' field."
 
     if fn.endswith(".xml"):
         if detect_nmap_format(content, filename) == "xml":
@@ -93,7 +114,7 @@ def detect_import_format(content: bytes, filename: str) -> tuple[str | None, str
     if detect_nmap_format(content, filename) == "xml":
         return IMPORT_FORMAT_NMAP, ""
 
-    return None, "Unsupported file format. Use Nmap XML (.xml), GoWitness ZIP (.zip), or plain text (.txt)."
+    return None, "Unsupported file format. Use Nmap XML (.xml), GoWitness ZIP (.zip), plain text (.txt), or whois/RDAP JSON (.json)."
 
 
 def run_import(
@@ -190,6 +211,23 @@ def run_import(
         summary = _run_text(db, project_id, content, filename, user_id, request_ip)
         return {
             "format": "text",
+            "hosts_created": summary.hosts_created,
+            "hosts_updated": summary.hosts_updated,
+            "ports_created": 0,
+            "ports_updated": 0,
+            "evidence_created": 0,
+            "errors": summary.errors,
+        }
+
+    if fmt == IMPORT_FORMAT_WHOIS:
+        records, parse_errors = parse_whois_json(content, filename)
+        if not records and parse_errors:
+            raise ValueError(
+                parse_errors[0] if len(parse_errors) == 1 else "; ".join(parse_errors[:3])
+            )
+        summary = _run_whois(db, project_id, content, filename, user_id, request_ip)
+        return {
+            "format": "whois",
             "hosts_created": summary.hosts_created,
             "hosts_updated": summary.hosts_updated,
             "ports_created": 0,

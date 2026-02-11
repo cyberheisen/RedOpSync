@@ -37,18 +37,18 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
 
   const subtext =
     context.type === "scope"
-      ? "Import Nmap, GoWitness, or plain text (one host per line) into this mission."
+      ? "Import Nmap, GoWitness, plain text (one host per line), or whois/RDAP JSON into this mission."
       : `Import into Subnet: ${context.cidr}${context.name ? ` (${context.name})` : ""}`;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (f) {
       const ext = f.name.split(".").pop()?.toLowerCase();
-      if (ext === "xml" || ext === "zip" || ext === "txt") {
+      if (ext === "xml" || ext === "zip" || ext === "txt" || ext === "json") {
         setError(null);
         setSelectedFile(f);
       } else {
-        setError("Use Nmap XML (.xml), ZIP (.zip), or plain text (.txt).");
+        setError("Use Nmap XML (.xml), ZIP (.zip), plain text (.txt), or whois JSON (.json).");
         setSelectedFile(null);
       }
     } else {
@@ -135,7 +135,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
             <input
               ref={fileInputRef}
               type="file"
-              accept=".xml,.zip,.txt"
+              accept=".xml,.zip,.txt,.json"
               onChange={handleFileChange}
               style={{ display: "none" }}
             />

@@ -75,6 +75,7 @@ class Host(Base):
     dns_name = Column(String(255), nullable=True)
     tags = Column(ARRAY(String), nullable=True, default=list)
     status = Column(String(64), nullable=True, default="unknown")
+    whois_data = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 

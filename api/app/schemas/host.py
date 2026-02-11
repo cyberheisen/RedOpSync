@@ -30,6 +30,7 @@ class HostRead(BaseModel):
     dns_name: str | None
     tags: list[str] | None
     status: str | None
+    whois_data: dict | None = None
     created_at: datetime
     updated_at: datetime
 
