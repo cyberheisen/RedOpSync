@@ -121,6 +121,33 @@ def _host_matches(pf: ParsedFilter, h: Any, subnet_cidr: str | None = None) -> b
         if op == "contains":
             return (v_norm or "") in s
         return False
+
+    whois_attr_map = {
+        "whois_network": ("network_name", "asn_description"),
+        "whois_asn": ("asn",),
+        "whois_country": ("country", "asn_country"),
+        "whois_cidr": ("cidr",),
+        "whois_type": ("network_type",),
+        "whois_registry": ("asn_registry",),
+    }
+    if attr in whois_attr_map:
+        w = getattr(h, "whois_data", None)
+        if not isinstance(w, dict):
+            s = ""
+        else:
+            keys = whois_attr_map[attr]
+            parts = [str(w.get(k, "") or "").strip() for k in keys if w.get(k) is not None]
+            s = _norm(" / ".join(parts) if parts else "")
+        if op == "exists":
+            return bool(s)
+        if op == "==":
+            return s == v_norm
+        if op == "!=":
+            return s != v_norm
+        if op == "contains":
+            return (v_norm or "") in s
+        return False
+
     return False
 
 
@@ -303,7 +330,10 @@ def _vuln_matches(pf: ParsedFilter, vd: Any, vi: Any) -> bool:
     return False
 
 
-_HOST_ATTRS = {"ip", "hostname", "dns_name", "unresolved", "resolved", "online", "offline", "status", "subnet"}
+_HOST_ATTRS = {
+    "ip", "hostname", "dns_name", "unresolved", "resolved", "online", "offline", "status", "subnet",
+    "whois_network", "whois_asn", "whois_country", "whois_cidr", "whois_type", "whois_registry",
+}
 _PORT_ATTRS = {"port", "port_number", "protocol", "service", "state"}
 _EVIDENCE_ATTRS = {"page_title", "response_code", "server", "technology", "source", "screenshot"}
 _VULN_ATTRS = {"severity", "vuln.severity", "vuln.title", "title", "vuln.cvss", "cvss"}

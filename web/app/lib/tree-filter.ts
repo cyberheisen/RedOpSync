@@ -69,7 +69,31 @@ export function parseFilter(input: string): ParsedFilter | null {
   return null;
 }
 
-export type HostLike = { id: string; ip: string; dns_name: string | null; status: string | null; subnet_id: string | null };
+export type HostLike = { id: string; ip: string; dns_name: string | null; status: string | null; subnet_id: string | null; whois_data?: Record<string, unknown> | null };
+
+/** Whois field keys in whois_data (backend) -> filter/report attr names */
+const WHOIS_FIELD_MAP: Record<string, string> = {
+  network: "network_name",
+  asn: "asn",
+  country: "country",
+  cidr: "cidr",
+  type: "network_type",
+  registry: "asn_registry",
+};
+function getWhoisVal(w: Record<string, unknown> | null | undefined, field: string): string {
+  if (!w || typeof w !== "object") return "";
+  if (field === "network") {
+    const v = (w.network_name ?? w.asn_description) ?? "";
+    return String(v).trim();
+  }
+  if (field === "country") {
+    const v = (w.country ?? w.asn_country) ?? "";
+    return String(v).trim();
+  }
+  const key = WHOIS_FIELD_MAP[field] ?? field;
+  const v = w[key];
+  return v != null ? String(v).trim() : "";
+}
 export type PortLike = { id: string; number: number; protocol: string; state: string | null; service_name: string | null };
 export type EvidenceLike = { id: string; caption: string | null; filename: string; mime: string | null; source: string | null };
 export type VulnInstanceLike = VulnLike & { id: string; definition_title: string | null; host_id: string };
@@ -219,6 +243,17 @@ function hostMatches(filter: ParsedFilter, h: HostLike): boolean {
   }
   if (attr === "status") {
     const s = statusNorm;
+    if (filter.op === "==") return s === (vNorm as string);
+    if (filter.op === "!=") return s !== (vNorm as string);
+    if (filter.op === "contains") return s.includes((vNorm as string) ?? "");
+    return false;
+  }
+  const whoisFields = ["whois_network", "whois_asn", "whois_country", "whois_cidr", "whois_type", "whois_registry"] as const;
+  const whoisField = whoisFields.find((f) => attr === f);
+  if (whoisField) {
+    const field = whoisField.replace("whois_", "") as keyof typeof WHOIS_FIELD_MAP;
+    const s = getWhoisVal(h.whois_data as Record<string, unknown> | null | undefined, field);
+    if (filter.op === "exists") return s.length > 0;
     if (filter.op === "==") return s === (vNorm as string);
     if (filter.op === "!=") return s !== (vNorm as string);
     if (filter.op === "contains") return s.includes((vNorm as string) ?? "");

@@ -159,6 +159,7 @@ type SelectedNode =
   | { type: "host"; id: string }
   | { type: "host-ports"; hostId: string }
   | { type: "host-whois"; hostId: string }
+  | { type: "host-whois-field"; hostId: string; field: "network" | "asn" | "country" | "cidr" | "type" | "registry" }
   | { type: "port"; id: string }
   | { type: "port-evidence"; id: string; portId: string; hostId: string }
   | { type: "host-vulnerabilities"; hostId: string }
@@ -281,12 +282,28 @@ function getEffectiveHostStatus(h: { status: string | null }): ReachabilityStatu
   return "unknown";
 }
 
+const WHOIS_FIELD_LABELS: Record<string, string> = { network: "Network", asn: "ASN", country: "Country", cidr: "CIDR", type: "Type", registry: "Registry" };
+function getWhoisDisplayValue(w: Record<string, unknown> | null | undefined, field: "network" | "asn" | "country" | "cidr" | "type" | "registry"): string {
+  if (!w || typeof w !== "object") return "";
+  if (field === "network") return String((w.network_name ?? w.asn_description) ?? "").trim();
+  if (field === "country") return [w.asn_country, w.country].filter(Boolean).map(String).join(" / ").trim();
+  const key = field === "asn" ? "asn" : field === "cidr" ? "cidr" : field === "type" ? "network_type" : "asn_registry";
+  const v = w[key];
+  return v != null ? String(v).trim() : "";
+}
+
 const FILTER_ATTRS = [
   { attr: "ip", category: "Host", desc: "Host IP address" },
   { attr: "hostname", category: "Host", desc: "DNS name / hostname" },
   { attr: "unresolved", category: "Host", desc: "Host has unresolved IP" },
   { attr: "online", category: "Host", desc: "Host is online" },
   { attr: "status", category: "Host", desc: "Host status" },
+  { attr: "whois_network", category: "Whois", desc: "Whois network name" },
+  { attr: "whois_asn", category: "Whois", desc: "Whois ASN" },
+  { attr: "whois_country", category: "Whois", desc: "Whois country" },
+  { attr: "whois_cidr", category: "Whois", desc: "Whois CIDR" },
+  { attr: "whois_type", category: "Whois", desc: "Whois network type" },
+  { attr: "whois_registry", category: "Whois", desc: "Whois registry" },
   { attr: "port", category: "Port", desc: "Port number" },
   { attr: "protocol", category: "Port", desc: "Protocol (tcp, udp)" },
   { attr: "service", category: "Port", desc: "Service name" },
@@ -1052,7 +1069,7 @@ export default function MissionDetailPage() {
   }, [mission?.id, mission?.sort_mode, hostIds, loadPortsForHost, loadVulnsForHost]);
 
   const selectedHost =
-    selectedNode?.type === "host" || selectedNode?.type === "host-ports" || selectedNode?.type === "host-whois" || selectedNode?.type === "host-vulnerabilities" || (selectedNode?.type === "note" && selectedNode.target === "host")
+    selectedNode?.type === "host" || selectedNode?.type === "host-ports" || selectedNode?.type === "host-whois" || selectedNode?.type === "host-whois-field" || selectedNode?.type === "host-vulnerabilities" || (selectedNode?.type === "note" && selectedNode.target === "host")
       ? hosts.find((h) =>
           selectedNode!.type === "note"
             ? selectedNode.targetId === h.id
@@ -1744,7 +1761,7 @@ export default function MissionDetailPage() {
       setNotesByPortLoaded((prev) => { const n = new Set(prev); portIds.forEach((id) => n.delete(id)); return n; });
       setPortsLoaded((prev) => { const n = new Set(prev); n.delete(hostId); return n; });
       setVulnsLoaded((prev) => { const n = new Set(prev); n.delete(hostId); return n; });
-      if (selectedNode && (selectedNode.type === "host" || selectedNode.type === "host-ports" || selectedNode.type === "host-whois" || selectedNode.type === "host-vulnerabilities") && (selectedNode.type === "host" ? selectedNode.id : selectedNode.hostId) === hostId) setSelectedNode(null);
+      if (selectedNode && (selectedNode.type === "host" || selectedNode.type === "host-ports" || selectedNode.type === "host-whois" || selectedNode.type === "host-whois-field" || selectedNode.type === "host-vulnerabilities") && (selectedNode.type === "host" ? selectedNode.id : selectedNode.hostId) === hostId) setSelectedNode(null);
       if (selectedNode?.type === "port" && portsByHost[hostId]?.some((p) => p.id === selectedNode.id)) setSelectedNode(null);
       if (selectedNode?.type === "port-evidence" && portIds.includes(selectedNode.portId)) setSelectedNode(null);
       if (selectedNode?.type === "note" && selectedNode.target === "host" && selectedNode.targetId === hostId) setSelectedNode(null);
@@ -1783,7 +1800,7 @@ export default function MissionDetailPage() {
       setNotesBySubnet((prev) => { const next = { ...prev }; delete next[subnetId]; return next; });
       setNotesBySubnetLoaded((prev) => { const n = new Set(prev); n.delete(subnetId); return n; });
       if (selectedNode?.type === "subnet" && selectedNode.id === subnetId) setSelectedNode(null);
-      if (selectedNode && (selectedNode.type === "host" || selectedNode.type === "host-ports" || selectedNode.type === "host-whois" || selectedNode.type === "host-vulnerabilities") && hostIdsToRemove.has(selectedNode.type === "host" ? selectedNode.id : selectedNode.hostId)) setSelectedNode(null);
+      if (selectedNode && (selectedNode.type === "host" || selectedNode.type === "host-ports" || selectedNode.type === "host-whois" || selectedNode.type === "host-whois-field" || selectedNode.type === "host-vulnerabilities") && hostIdsToRemove.has(selectedNode.type === "host" ? selectedNode.id : selectedNode.hostId)) setSelectedNode(null);
       if (selectedNode?.type === "port" && portIdsToRemove.has(selectedNode.id)) setSelectedNode(null);
       if (selectedNode?.type === "port-evidence" && portIdsToRemove.has(selectedNode.portId)) setSelectedNode(null);
       if (selectedNode?.type === "note" && (selectedNode.targetId === subnetId || (selectedNode.target === "host" && hostIdsToRemove.has(selectedNode.targetId)))) setSelectedNode(null);
@@ -2032,13 +2049,17 @@ export default function MissionDetailPage() {
   const nodeStyle = (depth: number) =>
     ({ padding: "4px 8px 4px " + (12 + depth * 12) + "px", display: "flex", alignItems: "center", gap: 6, minHeight: 24, color: "var(--text)" } as React.CSSProperties);
 
+  const whoisFields = ["network", "asn", "country", "cidr", "type", "registry"] as const;
+
   const renderTreeHost = (h: Host, baseDepth: number) => {
     const hKey = `host:${h.id}`;
     const portsKey = `host-ports:${h.id}`;
     const vulnsKey = `host-vulns:${h.id}`;
+    const whoisKey = `host-whois:${h.id}`;
     const hExp = expanded.has(hKey);
     const portsExp = expanded.has(portsKey);
     const vulnsExp = expanded.has(vulnsKey);
+    const whoisExp = expanded.has(whoisKey);
     const allPorts = portsByHost[h.id] ?? [];
     const ports = filterActive ? allPorts.filter((p) => matchingPortIds.has(p.id)) : allPorts;
     const allVulns = vulnsByHost[h.id] ?? [];
@@ -2170,17 +2191,39 @@ export default function MissionDetailPage() {
               );
             })}
             {h.whois_data && Object.keys(h.whois_data).length > 0 && (
-              <div
-                className={"theme-tree-node" + (selectedNode?.type === "host-whois" && selectedNode.hostId === h.id ? " selected" : "")}
-                style={{ ...nodeStyle(baseDepth + 1), color: "var(--text-muted)" }}
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  setSelectedNode({ type: "host-whois", hostId: h.id });
-                }}
-              >
-                <span style={{ width: 14 }}>▸</span>
-                <span style={{ opacity: 0.9 }}>Whois</span>
-              </div>
+              <>
+                <div
+                  className={"theme-tree-node" + (selectedNode?.type === "host-whois" && selectedNode.hostId === h.id ? " selected" : "")}
+                  style={{ ...nodeStyle(baseDepth + 1), color: "var(--text-muted)" }}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    toggleExpand(whoisKey);
+                    setSelectedNode({ type: "host-whois", hostId: h.id });
+                  }}
+                >
+                  <span style={{ width: 14, textAlign: "center" }}>{whoisExp ? "▼" : "▶"}</span>
+                  <span style={{ opacity: 0.9 }}>Whois</span>
+                </div>
+                {whoisExp && whoisFields.map((field) => {
+                  const val = getWhoisDisplayValue(h.whois_data, field);
+                  if (val === "") return null;
+                  const isSel = selectedNode?.type === "host-whois-field" && selectedNode.hostId === h.id && selectedNode.field === field;
+                  return (
+                    <div
+                      key={field}
+                      className={"theme-tree-node" + (isSel ? " selected" : "")}
+                      style={{ ...nodeStyle(baseDepth + 2), color: "var(--text-muted)" }}
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        setSelectedNode({ type: "host-whois-field", hostId: h.id, field });
+                      }}
+                    >
+                      <span style={{ width: 14 }}>·</span>
+                      <span style={{ opacity: 0.9 }}>{WHOIS_FIELD_LABELS[field]}</span>
+                    </div>
+                  );
+                })}
+              </>
             )}
             <div
               className={"theme-tree-node" + (selectedNode?.type === "host-ports" && selectedNode.hostId === h.id ? " selected" : "")}
@@ -3092,6 +3135,22 @@ export default function MissionDetailPage() {
             {w.asn_registry != null && (
               <div><strong>Registry:</strong> {String(w.asn_registry)}</div>
             )}
+          </div>
+        </div>
+      );
+    }
+
+    if (selectedNode.type === "host-whois-field") {
+      const host = hosts.find((h) => h.id === selectedNode.hostId);
+      if (!host) return null;
+      const w = host.whois_data;
+      const label = WHOIS_FIELD_LABELS[selectedNode.field] ?? selectedNode.field;
+      const value = getWhoisDisplayValue(w, selectedNode.field);
+      return (
+        <div style={{ padding: 24 }}>
+          <h2 style={{ margin: "0 0 16px", fontSize: "1.25rem" }}>Whois — {label} — {host.ip}</h2>
+          <div style={{ fontSize: 14, color: "var(--text)", lineHeight: 1.6 }}>
+            <strong>{label}:</strong> {value || "—"}
           </div>
         </div>
       );
