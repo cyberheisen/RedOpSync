@@ -161,12 +161,12 @@ def run_whois_import(
         action_type="whois_import",
         record_type="project",
         record_id=project_id,
-        details={
+        after_json={
             "filename": source_file,
             "hosts_created": summary.hosts_created,
             "hosts_updated": summary.hosts_updated,
             "errors_count": len(summary.errors),
         },
-        request_ip=request_ip,
+        ip_address=request_ip,
     )
     return summary
