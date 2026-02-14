@@ -1,7 +1,7 @@
 {
   "name": "redopsync-web",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.0.2",
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
@@ -9,12 +9,16 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "bs58": "^6.0.0",
+    "diff": "^5.2.0",
+    "jose": "^5.9.6",
     "lucide-react": "^0.468.0",
     "next": "14.2.5",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },
   "devDependencies": {
+    "@types/diff": "^5.2.0",
     "@types/node": "20.14.10",
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",

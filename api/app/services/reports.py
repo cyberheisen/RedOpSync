@@ -11,10 +11,15 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
 
 from app.models.models import Host, Port, Subnet, Evidence, VulnerabilityInstance, VulnerabilityDefinition
-from app.services.report_filter import parse_filter, entity_matches_filter
+from app.services.report_filter import (
+    ParsedFilter,
+    entity_matches_filter,
+    entity_matches_filters,
+    parse_filter,
+    parse_filters,
+)
 
 
 @dataclass
@@ -37,162 +42,168 @@ class ReportConfig:
     name: str
 
 
+def report_filters_to_expression(
+    filters: ReportFilters,
+    subnet_cidr: str | None = None,
+) -> list[str]:
+    """Convert ReportFilters to a list of filter expression strings (AND semantics)."""
+    clauses: list[str] = []
+    if filters.exclude_unresolved:
+        clauses.append("unresolved == false")
+    if filters.status:
+        s = (filters.status or "").strip().lower()
+        if s in ("online", "up"):
+            clauses.append("online exists")
+        elif s in ("offline", "down"):
+            clauses.append("offline exists")
+        elif s == "unknown":
+            clauses.append("status == unknown")
+    if subnet_cidr:
+        # subnet_cidr is resolved from filters.subnet_id by caller
+        escaped = subnet_cidr.replace('"', '""')
+        clauses.append(f'subnet == "{escaped}"')
+    if filters.port_number is not None:
+        clauses.append(f"port == {filters.port_number}")
+    if filters.port_protocol:
+        proto = (filters.port_protocol or "").strip().lower()
+        clauses.append(f'protocol == "{proto}"')
+    if filters.severity:
+        sev = (filters.severity or "").strip()
+        clauses.append(f"severity >= {sev}")
+    return clauses
+
+
 _SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Info": 4}
 
 
-def _run_ips(db: Session, project_id: UUID, filters: ReportFilters) -> list[dict]:
-    q = db.query(Host).filter(Host.project_id == project_id)
-    if filters.exclude_unresolved:
-        q = q.filter(Host.ip != "unresolved")
-    if filters.status:
-        s = filters.status.lower()
-        if s in ("online", "up"):
-            q = q.filter(or_(Host.status == "online", Host.status == "up"))
-        elif s in ("offline", "down"):
-            q = q.filter(or_(Host.status == "offline", Host.status == "down"))
-        elif s == "unknown":
-            q = q.filter(or_(Host.status.is_(None), Host.status == "unknown"))
-    if filters.subnet_id:
-        q = q.filter(Host.subnet_id == filters.subnet_id)
-    hosts = q.all()
-    ips = sorted({h.ip for h in hosts if h.ip and h.ip.lower() != "unresolved"})
-    return [{"ip": ip} for ip in ips]
-
-
-def _run_hostnames(db: Session, project_id: UUID, filters: ReportFilters) -> list[dict]:
-    q = db.query(Host).filter(Host.project_id == project_id)
-    if filters.exclude_unresolved:
-        q = q.filter(Host.ip != "unresolved")
-    if filters.status:
-        s = filters.status.lower()
-        if s in ("online", "up"):
-            q = q.filter(or_(Host.status == "online", Host.status == "up"))
-        elif s in ("offline", "down"):
-            q = q.filter(or_(Host.status == "offline", Host.status == "down"))
-        elif s == "unknown":
-            q = q.filter(or_(Host.status.is_(None), Host.status == "unknown"))
-    if filters.subnet_id:
-        q = q.filter(Host.subnet_id == filters.subnet_id)
-    hosts = q.all()
-    names = sorted({h.dns_name for h in hosts if h.dns_name}, key=lambda x: (x or "").lower())
-    return [{"hostname": n} for n in names]
-
-
-def _run_hosts_ip_dns(db: Session, project_id: UUID, filters: ReportFilters) -> list[dict]:
-    q = db.query(Host).filter(Host.project_id == project_id)
-    if filters.exclude_unresolved:
-        q = q.filter(Host.ip != "unresolved")
-    if filters.status:
-        s = filters.status.lower()
-        if s in ("online", "up"):
-            q = q.filter(or_(Host.status == "online", Host.status == "up"))
-        elif s in ("offline", "down"):
-            q = q.filter(or_(Host.status == "offline", Host.status == "down"))
-        elif s == "unknown":
-            q = q.filter(or_(Host.status.is_(None), Host.status == "unknown"))
-    if filters.subnet_id:
-        q = q.filter(Host.subnet_id == filters.subnet_id)
-    hosts = sorted(q.all(), key=lambda h: (h.ip or "", h.dns_name or ""))
-    return [
-        {
-            "ip": h.ip,
-            "dns_name": h.dns_name,
-            "label": f"{h.ip} ({h.dns_name})" if h.dns_name else h.ip,
-        }
-        for h in hosts
-        if h.ip and h.ip.lower() != "unresolved"
-    ]
-
-
-def _run_open_ports(db: Session, project_id: UUID, filters: ReportFilters) -> list[dict]:
-    q = (
-        db.query(Port, Host)
-        .join(Host, Port.host_id == Host.id)
-        .filter(Host.project_id == project_id, Port.state == "open")
-    )
-    if filters.exclude_unresolved:
-        q = q.filter(Host.ip != "unresolved")
-    if filters.status:
-        s = filters.status.lower()
-        if s in ("online", "up"):
-            q = q.filter(or_(Host.status == "online", Host.status == "up"))
-        elif s in ("offline", "down"):
-            q = q.filter(or_(Host.status == "offline", Host.status == "down"))
-        elif s == "unknown":
-            q = q.filter(or_(Host.status.is_(None), Host.status == "unknown"))
-    if filters.subnet_id:
-        q = q.filter(Host.subnet_id == filters.subnet_id)
-    if filters.port_number is not None:
-        q = q.filter(Port.number == filters.port_number)
-    if filters.port_protocol:
-        q = q.filter(Port.protocol == filters.port_protocol.lower())
-    rows = q.order_by(Host.ip, Port.number, Port.protocol).all()
-    return [
-        {
-            "ip": h.ip,
-            "port": p.number,
-            "protocol": p.protocol,
-            "service": p.service_name,
-            "host_dns": h.dns_name,
-        }
-        for p, h in rows
-    ]
-
-
-def _run_hosts_by_subnet(db: Session, project_id: UUID, filters: ReportFilters) -> list[dict]:
+def _run_ips(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
     q = (
         db.query(Host, Subnet)
         .outerjoin(Subnet, Host.subnet_id == Subnet.id)
         .filter(Host.project_id == project_id)
     )
-    if filters.exclude_unresolved:
-        q = q.filter(Host.ip != "unresolved")
-    if filters.status:
-        s = filters.status.lower()
-        if s in ("online", "up"):
-            q = q.filter(or_(Host.status == "online", Host.status == "up"))
-        elif s in ("offline", "down"):
-            q = q.filter(or_(Host.status == "offline", Host.status == "down"))
-        elif s == "unknown":
-            q = q.filter(or_(Host.status.is_(None), Host.status == "unknown"))
-    if filters.subnet_id:
-        q = q.filter(Host.subnet_id == filters.subnet_id)
-    rows = q.order_by(Subnet.cidr.nullslast(), Host.ip).all()
-    return [
-        {
+    ips = set()
+    for h, s in q.all():
+        if not h.ip or h.ip.lower() == "unresolved":
+            continue
+        if not entity_matches_filters(parsed_filters, "host", h, subnet_cidr=s.cidr if s else None):
+            continue
+        ips.add(h.ip)
+    return [{"ip": ip} for ip in sorted(ips)]
+
+
+def _run_hostnames(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
+    q = (
+        db.query(Host, Subnet)
+        .outerjoin(Subnet, Host.subnet_id == Subnet.id)
+        .filter(Host.project_id == project_id)
+    )
+    names = set()
+    for h, s in q.all():
+        if not h.dns_name:
+            continue
+        if not entity_matches_filters(parsed_filters, "host", h, subnet_cidr=s.cidr if s else None):
+            continue
+        names.add(h.dns_name)
+    return [{"hostname": n} for n in sorted(names, key=lambda x: (x or "").lower())]
+
+
+def _run_hosts_ip_dns(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
+    q = (
+        db.query(Host, Subnet)
+        .outerjoin(Subnet, Host.subnet_id == Subnet.id)
+        .filter(Host.project_id == project_id)
+    )
+    out = []
+    for h, s in q.all():
+        if not h.ip or h.ip.lower() == "unresolved":
+            continue
+        if not entity_matches_filters(parsed_filters, "host", h, subnet_cidr=s.cidr if s else None):
+            continue
+        out.append({
+            "ip": h.ip,
+            "dns_name": h.dns_name,
+            "label": f"{h.ip} ({h.dns_name})" if h.dns_name else h.ip,
+        })
+    return sorted(out, key=lambda r: (r["ip"] or "", r["dns_name"] or ""))
+
+
+def _run_open_ports(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
+    q = (
+        db.query(Port, Host, Subnet)
+        .join(Host, Port.host_id == Host.id)
+        .outerjoin(Subnet, Host.subnet_id == Subnet.id)
+        .filter(Host.project_id == project_id, Port.state == "open")
+        .order_by(Host.ip, Port.number, Port.protocol)
+    )
+    out = []
+    for p, h, s in q.all():
+        if not entity_matches_filters(
+            parsed_filters, "port", p, host=h, port=p, subnet_cidr=s.cidr if s else None
+        ):
+            continue
+        out.append({
+            "ip": h.ip,
+            "port": p.number,
+            "protocol": p.protocol,
+            "service": p.service_name,
+            "host_dns": h.dns_name,
+        })
+    return out
+
+
+def _run_hosts_by_subnet(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
+    q = (
+        db.query(Host, Subnet)
+        .outerjoin(Subnet, Host.subnet_id == Subnet.id)
+        .filter(Host.project_id == project_id)
+        .order_by(Subnet.cidr.nullslast(), Host.ip)
+    )
+    out = []
+    for h, s in q.all():
+        if not h.ip or h.ip.lower() == "unresolved":
+            continue
+        if not entity_matches_filters(parsed_filters, "host", h, subnet_cidr=s.cidr if s else None):
+            continue
+        out.append({
             "subnet_cidr": s.cidr if s else None,
             "subnet_name": s.name if s else None,
             "ip": h.ip,
             "dns_name": h.dns_name,
             "label": f"{h.ip} ({h.dns_name})" if h.dns_name else h.ip,
-        }
-        for h, s in rows
-        if h.ip and h.ip.lower() != "unresolved"
-    ]
+        })
+    return out
 
 
-def _run_unresolved_hosts(db: Session, project_id: UUID, filters: ReportFilters) -> list[dict]:
-    q = db.query(Host).filter(Host.project_id == project_id, Host.ip == "unresolved")
-    hosts = q.order_by(Host.dns_name).all()
-    return [{"hostname": h.dns_name, "ip": "unresolved"} for h in hosts]
-
-
-def _run_vulns_flat(db: Session, project_id: UUID, filters: ReportFilters) -> list[dict]:
+def _run_unresolved_hosts(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
     q = (
-        db.query(VulnerabilityInstance, VulnerabilityDefinition, Host)
+        db.query(Host, Subnet)
+        .outerjoin(Subnet, Host.subnet_id == Subnet.id)
+        .filter(Host.project_id == project_id, Host.ip == "unresolved")
+        .order_by(Host.dns_name)
+    )
+    out = []
+    for h, s in q.all():
+        if not entity_matches_filters(parsed_filters, "host", h, subnet_cidr=s.cidr if s else None):
+            continue
+        out.append({"hostname": h.dns_name, "ip": "unresolved"})
+    return out
+
+
+def _run_vulns_flat(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
+    q = (
+        db.query(VulnerabilityInstance, VulnerabilityDefinition, Host, Subnet)
         .join(VulnerabilityDefinition, VulnerabilityInstance.vulnerability_definition_id == VulnerabilityDefinition.id)
         .join(Host, VulnerabilityInstance.host_id == Host.id)
+        .outerjoin(Subnet, Host.subnet_id == Subnet.id)
         .filter(VulnerabilityInstance.project_id == project_id)
     )
-    if filters.exclude_unresolved:
-        q = q.filter(Host.ip != "unresolved")
-    if filters.subnet_id:
-        q = q.filter(Host.subnet_id == filters.subnet_id)
-    if filters.severity:
-        q = q.filter(VulnerabilityDefinition.severity == filters.severity)
-    rows = q.all()
     out = []
-    for vi, vd, h in rows:
+    for vi, vd, h, s in q.all():
+        if not entity_matches_filters(
+            parsed_filters, "vuln", vi, host=h, vd=vd, vi=vi, subnet_cidr=s.cidr if s else None
+        ):
+            continue
         sev = vd.severity or (f"CVSS {vd.cvss_score}" if vd.cvss_score is not None else "Info")
         out.append({
             "title": vd.title,
@@ -204,23 +215,21 @@ def _run_vulns_flat(db: Session, project_id: UUID, filters: ReportFilters) -> li
     return sorted(out, key=lambda r: (-_SEVERITY_ORDER.get(r["severity"], 99), r["title"], r["host_ip"]))
 
 
-def _run_vulns_by_severity(db: Session, project_id: UUID, filters: ReportFilters) -> list[dict]:
+def _run_vulns_by_severity(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
     q = (
-        db.query(VulnerabilityInstance, VulnerabilityDefinition, Host)
+        db.query(VulnerabilityInstance, VulnerabilityDefinition, Host, Subnet)
         .join(VulnerabilityDefinition, VulnerabilityInstance.vulnerability_definition_id == VulnerabilityDefinition.id)
         .join(Host, VulnerabilityInstance.host_id == Host.id)
+        .outerjoin(Subnet, Host.subnet_id == Subnet.id)
         .filter(VulnerabilityInstance.project_id == project_id)
     )
-    if filters.exclude_unresolved:
-        q = q.filter(Host.ip != "unresolved")
-    if filters.subnet_id:
-        q = q.filter(Host.subnet_id == filters.subnet_id)
-    if filters.severity:
-        q = q.filter(VulnerabilityDefinition.severity == filters.severity)
-    rows = q.all()
     order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Info": 4}
     out = []
-    for vi, vd, h in rows:
+    for vi, vd, h, s in q.all():
+        if not entity_matches_filters(
+            parsed_filters, "vuln", vi, host=h, vd=vd, vi=vi, subnet_cidr=s.cidr if s else None
+        ):
+            continue
         sev = vd.severity or "Info"
         out.append({
             "severity": sev,
@@ -232,26 +241,31 @@ def _run_vulns_by_severity(db: Session, project_id: UUID, filters: ReportFilters
     return sorted(out, key=lambda r: (order.get(r["severity"], 99), r["title"], r["host_ip"]))
 
 
-def _run_evidence_entries(db: Session, project_id: UUID, filters: ReportFilters) -> list[dict]:
+def _run_evidence_entries(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
     q = (
-        db.query(Evidence, Host)
+        db.query(Evidence, Host, Subnet)
         .outerjoin(Host, Evidence.host_id == Host.id)
+        .outerjoin(Subnet, Host.subnet_id == Subnet.id)
         .filter(Evidence.project_id == project_id)
     )
-    if filters.exclude_unresolved:
-        q = q.filter(or_(Evidence.host_id.is_(None), Host.ip != "unresolved"))
-    if filters.subnet_id:
-        q = q.filter(Evidence.host_id.isnot(None), Host.subnet_id == filters.subnet_id)
-    rows = q.all()
-    return [
-        {
+    out = []
+    for ev, h, s in q.all():
+        if h is None:
+            # Evidence with no host: preserve old behavior (keep row; host-level filters don't apply)
+            keep = True
+        else:
+            keep = entity_matches_filters(
+                parsed_filters, "evidence", ev, host=h, subnet_cidr=s.cidr if s else None
+            )
+        if not keep:
+            continue
+        out.append({
             "source": ev.source or "manual",
             "caption": ev.caption or ev.filename,
             "host_ip": h.ip if h else None,
             "filename": ev.filename,
-        }
-        for ev, h in rows
-    ]
+        })
+    return out
 
 
 BUILDER_COLUMNS: dict[str, list[tuple[str, str]]] = {
@@ -439,12 +453,19 @@ def run_report(
     report_type: str,
     filters: ReportFilters,
 ) -> tuple[list[dict], ReportConfig]:
-    """Execute report and return (rows, config)."""
+    """Execute report and return (rows, config). Converts ReportFilters to filter expressions and uses shared matching."""
     entry = REPORT_REGISTRY.get(report_type)
     if not entry:
         raise ValueError(f"Unknown report type: {report_type}")
     config, runner = entry
-    rows = runner(db, project_id, filters)
+    # Resolve subnet_id to CIDR for filter expression
+    subnet_cidr = None
+    if filters.subnet_id:
+        sub = db.query(Subnet).filter(Subnet.id == filters.subnet_id).first()
+        subnet_cidr = sub.cidr if sub else None
+    expressions = report_filters_to_expression(filters, subnet_cidr=subnet_cidr)
+    parsed_filters = parse_filters(expressions)
+    rows = runner(db, project_id, parsed_filters)
     return rows, config
 
 

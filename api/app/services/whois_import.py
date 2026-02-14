@@ -15,7 +15,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.models.models import Host
+from app.models.models import Host, Subnet
 from app.services.audit import log_audit
 from app.services.subnet import find_or_create_subnet_for_ip
 
@@ -32,10 +32,22 @@ WHOIS_KEYS = (
 )
 
 
+def _whois_owner(whois_data: dict) -> str | None:
+    """Return owner/network name from whois_data (network_name or asn_description)."""
+    if not whois_data:
+        return None
+    v = whois_data.get("network_name") or whois_data.get("asn_description")
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s if s else None
+
+
 @dataclass
 class WhoisImportSummary:
     hosts_created: int = 0
     hosts_updated: int = 0
+    subnets_updated: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -141,10 +153,17 @@ def run_whois_import(
     summary.errors.extend(parse_errors)
 
     source_file = filename or "whois-import.json"
+    subnets_updated_ids: set[UUID] = set()
     for ip, whois_data in records:
         try:
             host, created = _find_or_create_host(db, project_id, ip)
             host.whois_data = whois_data
+            owner = _whois_owner(whois_data)
+            if host.subnet_id and owner:
+                subnet = db.query(Subnet).filter(Subnet.id == host.subnet_id).first()
+                if subnet and subnet.name != owner:
+                    subnet.name = owner
+                    subnets_updated_ids.add(subnet.id)
             db.commit()
             db.refresh(host)
             if created:
@@ -153,6 +172,7 @@ def run_whois_import(
                 summary.hosts_updated += 1
         except Exception as e:
             summary.errors.append(f"{ip}: {e}")
+    summary.subnets_updated = len(subnets_updated_ids)
 
     log_audit(
         db,
@@ -165,6 +185,7 @@ def run_whois_import(
             "filename": source_file,
             "hosts_created": summary.hosts_created,
             "hosts_updated": summary.hosts_updated,
+            "subnets_updated": summary.subnets_updated,
             "errors_count": len(summary.errors),
         },
         ip_address=request_ip,

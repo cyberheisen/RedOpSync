@@ -9,7 +9,7 @@ const logoStyles: Record<LogoVariant, React.CSSProperties> = {
   },
   nav: {
     display: "block",
-    height: 38,
+    height: 48,
     width: "auto",
     flexShrink: 0,
   },

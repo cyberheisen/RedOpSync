@@ -230,6 +230,7 @@ def run_import(
             "format": "whois",
             "hosts_created": summary.hosts_created,
             "hosts_updated": summary.hosts_updated,
+            "subnets_updated": summary.subnets_updated,
             "ports_created": 0,
             "ports_updated": 0,
             "evidence_created": 0,

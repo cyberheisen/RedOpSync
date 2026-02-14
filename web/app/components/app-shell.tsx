@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiUrl } from "../lib/api";
+import { APP_VERSION } from "../lib/version";
 import { Logo } from "./logo";
 import { UserMenu } from "./user-menu";
 
@@ -72,6 +73,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         >
           <span>© {new Date().getFullYear()} RedOpSync</span>
           <span>·</span>
+          <span>v{APP_VERSION}</span>
+          <span>·</span>
           <span>Licensed under the MIT License</span>
           <span>·</span>
           <a href="/LICENSE" className="theme-link" target="_blank" rel="noopener noreferrer">
@@ -126,6 +129,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           }}
         >
           <span>© {new Date().getFullYear()} RedOpSync</span>
+          <span>·</span>
+          <span>v{APP_VERSION}</span>
           <span>·</span>
           <span>Licensed under the MIT License</span>
           <span>·</span>
@@ -241,7 +246,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               display: "flex",
               alignItems: "center",
               justifyContent: "flex-end",
-              padding: "8px 16px",
+              padding: "12px 16px",
               borderBottom: "1px solid var(--border)",
               backgroundColor: "var(--bg-panel)",
               flexShrink: 0,
@@ -269,6 +274,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         }}
       >
         <span>© {new Date().getFullYear()} RedOpSync</span>
+        <span>·</span>
+        <span>v{APP_VERSION}</span>
         <span>·</span>
         <span>Licensed under the MIT License</span>
         <span>·</span>

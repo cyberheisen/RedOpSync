@@ -22,6 +22,9 @@ import { RenameHostModal } from "../../components/rename-host-modal";
 import { RenameSubnetModal } from "../../components/rename-subnet-modal";
 import { StubModal } from "../../components/stub-modal";
 import { CustomReportsPanel } from "../../components/custom-reports-panel";
+import { ToolsDecoderPanel } from "../../components/tools-decoder-panel";
+import { ToolsDiffPanel } from "../../components/tools-diff-panel";
+import { ToolsDeduplicationPanel } from "../../components/tools-deduplication-panel";
 import { TodosPanel } from "../../components/todos-panel";
 import { AddTodoModal } from "../../components/add-todo-modal";
 import { Toast } from "../../components/toast";
@@ -35,13 +38,14 @@ import {
   type SeverityLevel,
   type VulnLike,
 } from "../../lib/severity";
-import { Globe, TriangleAlert, Tag, CheckSquare, FileText } from "lucide-react";
+import { Globe, TriangleAlert, Tag, CheckSquare, FileText, HelpCircle, Hash, Network, Wrench } from "lucide-react";
 
 type Subnet = {
   id: string;
   project_id: string;
   cidr: string;
   name: string | null;
+  in_scope?: boolean;
 };
 
 type Host = {
@@ -52,6 +56,7 @@ type Host = {
   dns_name: string | null;
   status: string | null;
   whois_data?: Record<string, unknown> | null;
+  in_scope?: boolean;
 };
 
 type Port = {
@@ -169,16 +174,24 @@ type SelectedNode =
   | { type: "tag-filter"; tagId: string; tagName: string }
   | { type: "scope-notes" }
   | { type: "unresolved" }
+  | { type: "out-of-scope" }
   | { type: "note"; id: string; target: NoteTarget; targetId: string }
   | { type: "vulnerabilities" }
   | { type: "custom-reports" }
+  | { type: "report-builder" }
+  | { type: "predefined-reports" }
   | { type: "saved-report"; id: string }
   | { type: "todos" }
   | { type: "tags" }
   | { type: "todo"; id: string }
+  | { type: "tools-diff" }
+  | { type: "tools-decoder-base" }
+  | { type: "tools-decoder-xor" }
+  | { type: "tools-decoder-jwt" }
+  | { type: "tools-deduplication" }
   | null;
 
-const ICON = { ports: "▸", vulns: "⚠", notes: "≡" } as const;
+const ICON = { notes: "≡" } as const;
 const navIconStyle = { width: 16, height: 16, opacity: 0.9, flexShrink: 0 };
 
 function isUnresolvedHost(h: { ip: string }): boolean {
@@ -660,7 +673,7 @@ export default function MissionDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedNode, setSelectedNode] = useState<SelectedNode>(null);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set(["scope"]));
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [lockError, setLockError] = useState("");
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -715,6 +728,7 @@ export default function MissionDetailPage() {
   const defaultTreeWidth = 280;
   const [treeFilterInput, setTreeFilterInput] = useState("");
   const [filterHelpOpen, setFilterHelpOpen] = useState(false);
+  const [activeTagFilterState, setActiveTagFilterState] = useState<{ tagId: string; tagName: string } | null>(null);
   const [treeWidth, setTreeWidthState] = useState(defaultTreeWidth);
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1183,12 +1197,58 @@ export default function MissionDetailPage() {
     return acc;
   }, [hosts]);
 
+  const inScopeSubnets = useMemo(() => subnets.filter((s) => s.in_scope !== false), [subnets]);
+  const outOfScopeSubnets = useMemo(() => subnets.filter((s) => s.in_scope === false), [subnets]);
+  const standaloneOutOfScopeHosts = useMemo(
+    () =>
+      hosts.filter(
+        (h) =>
+          h.in_scope === false &&
+          (h.subnet_id == null || subnets.find((s) => s.id === h.subnet_id)?.in_scope !== false)
+      ),
+    [hosts, subnets]
+  );
+
   const getDescendantKeys = useCallback((key: string): Set<string> => {
     const out = new Set<string>([key]);
     if (key === "scope") {
-      subnets.forEach((s) => out.add(`subnet:${s.id}`));
+      inScopeSubnets.forEach((s) => out.add(`subnet:${s.id}`));
       out.add("unresolved");
-      hosts.forEach((h) => {
+      hosts.filter((h) => h.in_scope !== false).forEach((h) => {
+        out.add(`host:${h.id}`);
+        out.add(`host-ports:${h.id}`);
+        out.add(`host-vulns:${h.id}`);
+        (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+      });
+      out.add("out-of-scope");
+      outOfScopeSubnets.forEach((s) => {
+        out.add(`subnet:${s.id}`);
+        (hostsBySubnet[s.id] ?? []).forEach((h) => {
+          out.add(`host:${h.id}`);
+          out.add(`host-ports:${h.id}`);
+          out.add(`host-vulns:${h.id}`);
+          (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+        });
+      });
+      standaloneOutOfScopeHosts.forEach((h) => {
+        out.add(`host:${h.id}`);
+        out.add(`host-ports:${h.id}`);
+        out.add(`host-vulns:${h.id}`);
+        (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+      });
+      return out;
+    }
+    if (key === "out-of-scope") {
+      outOfScopeSubnets.forEach((s) => {
+        out.add(`subnet:${s.id}`);
+        (hostsBySubnet[s.id] ?? []).forEach((h) => {
+          out.add(`host:${h.id}`);
+          out.add(`host-ports:${h.id}`);
+          out.add(`host-vulns:${h.id}`);
+          (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+        });
+      });
+      standaloneOutOfScopeHosts.forEach((h) => {
         out.add(`host:${h.id}`);
         out.add(`host-ports:${h.id}`);
         out.add(`host-vulns:${h.id}`);
@@ -1228,8 +1288,12 @@ export default function MissionDetailPage() {
       return out;
     }
     if (key === "host-vulns:" || key.startsWith("host-vulns:") || key.startsWith("port-evidence:") || key === "vulnerabilities") return out;
+    if (key === "tools") {
+      out.add("tools-decoder");
+      return out;
+    }
     return out;
-  }, [subnets, hosts, hostsBySubnet, portsByHost]);
+  }, [subnets, hosts, hostsBySubnet, portsByHost, inScopeSubnets, outOfScopeSubnets, standaloneOutOfScopeHosts]);
 
   const toggleExpandCollapse = useCallback((key: string) => {
     const keys = getDescendantKeys(key);
@@ -1241,6 +1305,22 @@ export default function MissionDetailPage() {
         return next;
       }
       return new Set([...prev, ...keys]);
+    });
+  }, [getDescendantKeys]);
+
+  const toggleExpandCollapseAll = useCallback(() => {
+    setExpanded((prev) => {
+      const allKeys = new Set([
+        ...getDescendantKeys("scope"),
+        ...getDescendantKeys("vulnerabilities"),
+        ...getDescendantKeys("todos-root"),
+        ...getDescendantKeys("tags-root"),
+        ...getDescendantKeys("custom-reports"),
+        ...getDescendantKeys("tools"),
+      ]);
+      const allExpanded = [...allKeys].every((k) => prev.has(k));
+      if (allExpanded) return new Set();
+      return new Set([...prev, ...allKeys]);
     });
   }, [getDescendantKeys]);
 
@@ -1307,7 +1387,7 @@ export default function MissionDetailPage() {
     };
   }, [parsedFilter, hosts, subnets, hostsBySubnet, portsByHost, evidenceByPort, vulnsByHost]);
 
-  const activeTagFilter = selectedNode?.type === "tag-filter" ? selectedNode : null;
+  const activeTagFilter = activeTagFilterState;
   const {
     effectiveMatchingHostIds,
     effectiveMatchingSubnetIds,
@@ -1365,40 +1445,6 @@ export default function MissionDetailPage() {
     allPortIds.forEach((portId) => loadEvidenceForPort(portId));
   }, [filterActive, filterNeedsEvidence, portsByHost, loadEvidenceForPort]);
 
-  useEffect(() => {
-    if ((filterActive && parsedFilter) || tagFilterActive) {
-      setExpanded((prev) => {
-        const next = new Set(prev);
-        next.add("scope");
-        subnets.forEach((s) => {
-          if (effectiveMatchingSubnetIds.has(s.id)) next.add(`subnet:${s.id}`);
-        });
-        if (effectiveHasMatchingUnresolved) next.add("unresolved");
-        hosts.forEach((h) => {
-          if (effectiveMatchingHostIds.has(h.id)) {
-            next.add(`host:${h.id}`);
-            const ports = portsByHost[h.id] ?? [];
-            const portMatch = !filterActive ? true : ports.some((p) => matchingPortIds.has(p.id));
-            if (portMatch) next.add(`host-ports:${h.id}`);
-          }
-        });
-        return next;
-      });
-    }
-  }, [filterActive, tagFilterActive, parsedFilter, effectiveMatchingSubnetIds, effectiveMatchingHostIds, effectiveHasMatchingUnresolved, matchingPortIds, subnets, hosts, portsByHost]);
-
-  const unresolvedCount = (hostsBySubnet["_unresolved"] ?? []).length;
-  useEffect(() => {
-    if (unresolvedCount > 0) {
-      setExpanded((prev) => {
-        let next = new Set(prev);
-        if (!next.has("scope")) next = next.add("scope");
-        if (!next.has("unresolved")) next = next.add("unresolved");
-        return next;
-      });
-    }
-  }, [unresolvedCount]);
-
   // Load evidence and port notes when port detail pane is shown
   const selectedPortId = selectedNode?.type === "port" ? selectedNode.id : null;
   useEffect(() => {
@@ -1432,7 +1478,38 @@ export default function MissionDetailPage() {
   const getLockForRecord = (recordType: string, recordId: string) =>
     locks.find((l) => l.record_type === recordType && l.record_id === recordId) ?? null;
 
+  const lockableRecord = useMemo((): { recordType: string; recordId: string } | null => {
+    if (!selectedNode) return null;
+    switch (selectedNode.type) {
+      case "subnet":
+        return { recordType: "subnet", recordId: selectedNode.id };
+      case "host":
+        return { recordType: "host", recordId: selectedNode.id };
+      case "host-ports":
+      case "host-whois":
+      case "host-whois-field":
+      case "host-vulnerabilities":
+        return { recordType: "host", recordId: selectedNode.hostId };
+      case "port":
+        return { recordType: "port", recordId: selectedNode.id };
+      case "vuln-definition":
+        return { recordType: "vulnerability_definition", recordId: selectedNode.id };
+      default:
+        return null;
+    }
+  }, [selectedNode]);
+
   const currentHostLock = selectedHost ? getLockForRecord("host", selectedHost.id) : null;
+
+  const currentLockId =
+    lockableRecord && currentUserId
+      ? locks.find(
+          (l) =>
+            l.record_type === lockableRecord.recordType &&
+            l.record_id === lockableRecord.recordId &&
+            l.locked_by_user_id === currentUserId
+        )?.id ?? null
+      : null;
 
   const myHostLockId =
     selectedHost && currentUserId
@@ -1445,10 +1522,44 @@ export default function MissionDetailPage() {
       : null;
 
   useEffect(() => {
-    if (!myHostLockId) return;
-    const interval = setInterval(() => renewLock(myHostLockId), 60_000);
+    if (!currentLockId) return;
+    const interval = setInterval(() => renewLock(currentLockId), 60_000);
     return () => clearInterval(interval);
-  }, [myHostLockId, renewLock]);
+  }, [currentLockId, renewLock]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!currentUserId || !missionId) return;
+      const target = lockableRecord;
+      const locksWeHold = locks.filter((l) => l.locked_by_user_id === currentUserId);
+      for (const lock of locksWeHold) {
+        if (cancelled) return;
+        const isForTarget = target && lock.record_type === target.recordType && lock.record_id === target.recordId;
+        if (!isForTarget) {
+          try {
+            await releaseLock(lock.id);
+          } catch {
+            // ignore release errors
+          }
+        }
+      }
+      if (cancelled) return;
+      if (target) {
+        const alreadyHave = locksWeHold.some((l) => l.record_type === target.recordType && l.record_id === target.recordId);
+        if (!alreadyHave) {
+          try {
+            await acquireLock(target.recordType, target.recordId);
+          } catch (e) {
+            if (!cancelled) setToast(e instanceof Error ? e.message : "Failed to acquire lock");
+          }
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [lockableRecord, locks, currentUserId, missionId, acquireLock, releaseLock, setToast]);
 
   const handleAcquireLock = async (recordType: string, recordId: string) => {
     setLockError("");
@@ -1819,6 +1930,56 @@ export default function MissionDetailPage() {
     }
   };
 
+  const handleMoveSubnetScope = useCallback(async (subnetId: string, inScope: boolean) => {
+    try {
+      await acquireLock("subnet", subnetId);
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "Could not acquire lock; try again or select the subnet first");
+      return;
+    }
+    try {
+      const res = await fetch(apiUrl(`/api/subnets/${subnetId}`), {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ in_scope: inScope }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail ?? "Failed to update subnet");
+      }
+      setSubnets((prev) => prev.map((s) => (s.id === subnetId ? { ...s, in_scope: inScope } : s)));
+      setToast(inScope ? "Moved back into scope" : "Moved out of scope");
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "Failed to update scope");
+    }
+  }, [acquireLock, setToast]);
+
+  const handleMoveHostScope = useCallback(async (hostId: string, inScope: boolean) => {
+    try {
+      await acquireLock("host", hostId);
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "Could not acquire lock; try again or select the host first");
+      return;
+    }
+    try {
+      const res = await fetch(apiUrl(`/api/hosts/${hostId}`), {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ in_scope: inScope }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail ?? "Failed to update host");
+      }
+      setHosts((prev) => prev.map((h) => (h.id === hostId ? { ...h, in_scope: inScope } : h)));
+      setToast(inScope ? "Moved back into scope" : "Moved out of scope");
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "Failed to update scope");
+    }
+  }, [acquireLock, setToast]);
+
   const handleCreateVuln = async (data: {
     hostIds: string[];
     title: string;
@@ -2059,7 +2220,7 @@ export default function MissionDetailPage() {
 
   const whoisFields = ["network", "asn", "country", "cidr", "type", "registry"] as const;
 
-  const renderTreeHost = (h: Host, baseDepth: number) => {
+  const renderTreeHost = (h: Host, baseDepth: number, isOutOfScope?: boolean) => {
     const hKey = `host:${h.id}`;
     const portsKey = `host-ports:${h.id}`;
     const vulnsKey = `host-vulns:${h.id}`;
@@ -2092,7 +2253,7 @@ export default function MissionDetailPage() {
       <div key={h.id}>
         <div
           className={"theme-tree-node" + (selectedNode?.type === "host" && selectedNode.id === h.id ? " selected" : "")}
-          style={{ ...nodeStyle(baseDepth), color: hostSeverity(h.id) ? getSeverityColor(hostSeverity(h.id)) : "var(--text)" }}
+          style={{ ...nodeStyle(baseDepth), color: isOutOfScope ? "var(--text-muted)" : (hostSeverity(h.id) ? getSeverityColor(hostSeverity(h.id)) : "var(--text)") }}
           onClick={(ev) => {
             ev.stopPropagation();
             toggleExpand(hKey, () => expandHostAndLoad(h.id));
@@ -2101,20 +2262,16 @@ export default function MissionDetailPage() {
           onContextMenu={(ev) => {
             ev.preventDefault();
             ev.stopPropagation();
-            const hostLock = getLockForRecord("host", h.id);
-            const isMyLock = hostLock?.locked_by_user_id === currentUserId;
-            const lockItems =
-              hostLock && isMyLock
-                ? [{ label: "Release lock", onClick: () => { const l = locks.find((x) => x.record_type === "host" && x.record_id === h.id); if (l?.id) handleReleaseLock(l.id); } }]
-                : !hostLock
-                  ? [{ label: "Acquire lock", onClick: () => handleAcquireLock("host", h.id) }]
-                  : [];
+            setSelectedNode({ type: "host", id: h.id });
             setContextMenu({
               x: ev.clientX,
               y: ev.clientY,
               items: [
-                ...lockItems,
                 { label: "Expand/Collapse", onClick: () => toggleExpandCollapse(hKey) },
+                { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
+                h.in_scope !== false
+                  ? { label: "Move out of scope", onClick: () => handleMoveHostScope(h.id, false) }
+                  : { label: "Move back into scope", onClick: () => handleMoveHostScope(h.id, true) },
                 { label: "Add Port", onClick: () => setPortModal({ mode: "add", host: h }) },
                 { label: "Add Vulnerability", onClick: () => setVulnModal({ mode: "add", host: h }) },
                 { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "host", host: h }) },
@@ -2202,15 +2359,29 @@ export default function MissionDetailPage() {
               <>
                 <div
                   className={"theme-tree-node" + (selectedNode?.type === "host-whois" && selectedNode.hostId === h.id ? " selected" : "")}
-                  style={{ ...nodeStyle(baseDepth + 1), color: "var(--text-muted)" }}
+                  style={nodeStyle(baseDepth + 1)}
                   onClick={(ev) => {
                     ev.stopPropagation();
                     toggleExpand(whoisKey);
                     setSelectedNode({ type: "host-whois", hostId: h.id });
                   }}
+                  onContextMenu={(ev) => {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    setSelectedNode({ type: "host-whois", hostId: h.id });
+                    setContextMenu({
+                      x: ev.clientX,
+                      y: ev.clientY,
+                      items: [
+                        { label: "Expand/Collapse", onClick: () => toggleExpandCollapse(whoisKey) },
+                        { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
+                      ],
+                    });
+                  }}
                 >
                   <span style={{ width: 14, textAlign: "center" }}>{whoisExp ? "▼" : "▶"}</span>
-                  <span style={{ opacity: 0.9 }}>Whois</span>
+                  <HelpCircle style={navIconStyle} />
+                  Whois
                 </div>
                 {whoisExp && whoisFields.map((field) => {
                   const val = getWhoisDisplayValue(h.whois_data, field);
@@ -2220,14 +2391,14 @@ export default function MissionDetailPage() {
                     <div
                       key={field}
                       className={"theme-tree-node" + (isSel ? " selected" : "")}
-                      style={{ ...nodeStyle(baseDepth + 2), color: "var(--text-muted)" }}
+                      style={nodeStyle(baseDepth + 2)}
                       onClick={(ev) => {
                         ev.stopPropagation();
                         setSelectedNode({ type: "host-whois-field", hostId: h.id, field });
                       }}
                     >
                       <span style={{ width: 14 }}>·</span>
-                      <span style={{ opacity: 0.9 }}>{WHOIS_FIELD_LABELS[field]}</span>
+                      {WHOIS_FIELD_LABELS[field]}
                     </div>
                   );
                 })}
@@ -2249,6 +2420,7 @@ export default function MissionDetailPage() {
                   y: ev.clientY,
                   items: [
                     { label: "Expand/Collapse", onClick: () => toggleExpandCollapse(portsKey) },
+                    { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
                     { label: "Add Port", onClick: () => setPortModal({ mode: "add", host: h }) },
                     { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "host_ports", host: h }) },
                     { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "host_ports", parentId: h.id, contextLabel: `Ports on ${hostLabel(h)}` }) },
@@ -2257,7 +2429,7 @@ export default function MissionDetailPage() {
               }}
             >
               <span style={{ width: 14, textAlign: "center" }}>{portsExp ? "▼" : "▶"}</span>
-              <span style={{ opacity: 0.8 }}>{ICON.ports}</span>
+              <Network style={navIconStyle} />
               <span>Ports</span>
               {portsLoad && <Spinner />}
               {portsLoaded.has(h.id) && !portsLoad && <span style={{ color: "var(--text-muted)", fontSize: 11 }}>({ports.length})</span>}
@@ -2533,13 +2705,14 @@ export default function MissionDetailPage() {
                       y: ev.clientY,
                       items: [
                         { label: "Expand/Collapse", onClick: () => toggleExpandCollapse(vulnsKey) },
+                        { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
                         { label: "Add Vulnerability", onClick: () => setVulnModal({ mode: "add", host: h }) },
                       ],
                     });
                   }}
                 >
                   <span style={{ width: 14, textAlign: "center" }}>{vulnsExp ? "▼" : "▶"}</span>
-                  <span style={{ opacity: 0.8 }}>{ICON.vulns}</span>
+                  <TriangleAlert style={navIconStyle} />
                   <span>Vulnerabilities</span>
                   {vulnsLoad && <Spinner />}
                   {vulnsLoaded.has(h.id) && !vulnsLoad && <span style={{ color: "var(--text-muted)", fontSize: 11 }}>({vulns.length})</span>}
@@ -2792,8 +2965,19 @@ export default function MissionDetailPage() {
     }
     if (selectedNode.type === "unresolved")
       return <div style={{ padding: 24, color: "var(--text-muted)" }}>Hosts with DNS but unresolved IP. Expand to see hosts.</div>;
+    if (selectedNode.type === "out-of-scope")
+      return (
+        <div style={{ padding: 24, color: "var(--text-muted)" }}>
+          <h2 style={{ margin: "0 0 8px", fontSize: "1.25rem", color: "var(--text-muted)" }}>Out of scope</h2>
+          <p style={{ margin: 0 }}>Subnets and hosts moved out of scope appear here. Right-click an item to move it back into scope.</p>
+        </div>
+      );
     if (selectedNode.type === "custom-reports")
-      return <CustomReportsPanel projectId={missionId} subnets={subnets} onToast={setToast} savedReports={savedReports} onSavedReportsChange={loadSavedReports} />;
+      return <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 14 }}>Select Report builder, Predefined reports, or a saved report from the list.</div>;
+    if (selectedNode.type === "report-builder")
+      return <CustomReportsPanel projectId={missionId} subnets={subnets} onToast={setToast} savedReports={savedReports} onSavedReportsChange={loadSavedReports} mode="builder" />;
+    if (selectedNode.type === "predefined-reports")
+      return <CustomReportsPanel projectId={missionId} subnets={subnets} onToast={setToast} savedReports={savedReports} onSavedReportsChange={loadSavedReports} mode="predefined" />;
     if (selectedNode.type === "saved-report") {
       const sr = savedReports.find((r) => r.id === selectedNode.id);
       if (!sr) return <div style={{ padding: 24, color: "var(--text-muted)" }}>Saved report not found.</div>;
@@ -2805,6 +2989,11 @@ export default function MissionDetailPage() {
         />
       );
     }
+    if (selectedNode.type === "tools-diff") return <ToolsDiffPanel />;
+    if (selectedNode.type === "tools-decoder-base") return <ToolsDecoderPanel variant="base" />;
+    if (selectedNode.type === "tools-decoder-xor") return <ToolsDecoderPanel variant="xor" />;
+    if (selectedNode.type === "tools-decoder-jwt") return <ToolsDecoderPanel variant="jwt" />;
+    if (selectedNode.type === "tools-deduplication") return <ToolsDeduplicationPanel />;
     if (selectedNode.type === "todos")
       return (
         <TodosPanel
@@ -2818,21 +3007,26 @@ export default function MissionDetailPage() {
           onFocusNode={(node) => {
             setExpanded((prev) => {
               const next = new Set(prev);
-              next.add("scope");
-              if (node.type === "subnet") next.add(`subnet:${node.id}`);
-              if (node.type === "host") {
+              if (node.type === "subnet") {
+                const s = subnets.find((x) => x.id === node.id);
+                if (s?.in_scope === false) next.add("out-of-scope"); else next.add("scope");
+                next.add(`subnet:${node.id}`);
+              } else if (node.type === "host") {
                 const h = hosts.find((x) => x.id === node.id);
+                if (h?.in_scope === false) next.add("out-of-scope"); else next.add("scope");
                 if (h?.subnet_id) next.add(`subnet:${h.subnet_id}`);
                 next.add(`host:${node.id}`);
                 next.add(`host-ports:${node.id}`);
-              }
-              if (node.type === "port") {
+              } else if (node.type === "port") {
                 const port = Object.entries(portsByHost).flatMap(([hid, list]) => list.map((p) => ({ hostId: hid, port: p }))).find((x) => x.port.id === node.id);
                 if (port) {
                   const h = hosts.find((x) => x.id === port.hostId);
+                  if (h?.in_scope === false) next.add("out-of-scope"); else next.add("scope");
                   if (h?.subnet_id) next.add(`subnet:${h.subnet_id}`);
                   next.add(`host:${port.hostId}`);
                   next.add(`host-ports:${port.hostId}`);
+                } else {
+                  next.add("scope");
                 }
               }
               return next;
@@ -2904,8 +3098,11 @@ export default function MissionDetailPage() {
         <div style={{ padding: 24 }}>
           <h2 style={{ margin: "0 0 16px", fontSize: "1.25rem" }}>
             {subnet.cidr}
-            {subnet.name && <span style={{ color: "var(--text-muted)", fontWeight: 400, marginLeft: 8 }}>({subnet.name})</span>}
-            {subnetOwner && <span style={{ color: "var(--text-muted)", fontWeight: 400, marginLeft: 8 }}>{subnetOwner}</span>}
+            {(subnet.name || subnetOwner) && (
+              <span style={{ color: "var(--text-muted)", fontWeight: 400, marginLeft: 8 }}>
+                ({subnet.name || subnetOwner})
+              </span>
+            )}
           </h2>
           <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>{subnetHosts.length} host(s). Right-click for actions.</p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
@@ -3557,7 +3754,18 @@ export default function MissionDetailPage() {
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, fontSize: 11, color: "var(--text-muted)", flexWrap: "wrap" }}>
                 <span style={{ backgroundColor: "var(--accent)", color: "var(--bg)", padding: "2px 6px", borderRadius: 4 }}>Filtered</span>
                 {tagFilterActive && activeTagFilter && (
-                  <span style={{ color: "var(--text)" }}>Tag: {activeTagFilter.tagName}</span>
+                  <>
+                    <span style={{ color: "var(--text)" }}>Tag: {activeTagFilter.tagName}</span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTagFilterState(null)}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0 2px", fontSize: 12 }}
+                      title="Clear tag filter"
+                      aria-label="Clear tag filter"
+                    >
+                      ✕
+                    </button>
+                  </>
                 )}
                 <span>{effectiveVisibleHostCount} of {hosts.length} hosts</span>
               </div>
@@ -3574,10 +3782,11 @@ export default function MissionDetailPage() {
                 y: e.clientY,
                 items: [
                   { label: "Expand/Collapse", onClick: () => toggleExpandCollapse("scope") },
+                  { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
                   { label: "Add Subnet", onClick: () => setAddSubnetModal(true) },
                   { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "scope" }) },
                   { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "scope", contextLabel: "Scope" }) },
-                  { label: "Import Hosts/Scan Results", onClick: () => setImportHostsModal({ type: "scope" }) },
+                  { label: "Import scan results", onClick: () => setImportHostsModal({ type: "scope" }) },
                 ],
               });
             }}
@@ -3585,9 +3794,15 @@ export default function MissionDetailPage() {
             <span style={{ width: 14 }}>{expanded.has("scope") ? "▼" : "▶"}</span>
             <Globe style={navIconStyle} />
             Scope
+            <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({hosts.length})</span>
           </div>
           {expanded.has("scope") && (
             <>
+              {(() => {
+                const scopeEmpty = !projectNotes.some((n) => n.target_type === "scope") && !projectTodos.some((t) => t.target_type === "scope") && inScopeSubnets.filter((s) => !filterActive && !tagFilterActive || effectiveMatchingSubnetIds.has(s.id)).length === 0 && (hostsBySubnet["_unresolved"] ?? []).filter((h) => h.in_scope !== false).length === 0 && (hostsBySubnet["_unassigned"] ?? []).filter((h) => h.in_scope !== false).length === 0 && outOfScopeSubnets.length === 0 && standaloneOutOfScopeHosts.length === 0;
+                if (scopeEmpty) return <div className="theme-tree-node" style={{ ...nodeStyle(1), color: "var(--text-dim)", fontStyle: "italic" }}>None</div>;
+                return (
+                  <>
               {projectNotes.filter((n) => n.target_type === "scope").map((n) => {
                   const isSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "scope";
                   const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
@@ -3633,12 +3848,13 @@ export default function MissionDetailPage() {
                   );
                 });
               })()}
-              {subnets.filter((s) => !filterActive && !tagFilterActive || effectiveMatchingSubnetIds.has(s.id)).map((s) => {
+              {inScopeSubnets.filter((s) => !filterActive && !tagFilterActive || effectiveMatchingSubnetIds.has(s.id)).map((s) => {
                 const key = `subnet:${s.id}`;
                 const isExp = expanded.has(key);
                 const isSel = selectedNode?.type === "subnet" && selectedNode.id === s.id;
-                const subnetHosts = (hostsBySubnet[s.id] ?? []).filter((h) => !filterActive && !tagFilterActive || effectiveMatchingHostIds.has(h.id));
-                const hostCount = filterActive ? subnetHosts.length : (hostsBySubnet[s.id] ?? []).length;
+                const inScopeHostsInSubnet = (hostsBySubnet[s.id] ?? []).filter((h) => h.in_scope !== false);
+                const subnetHosts = inScopeHostsInSubnet.filter((h) => !filterActive && !tagFilterActive || effectiveMatchingHostIds.has(h.id));
+                const hostCount = filterActive ? subnetHosts.length : inScopeHostsInSubnet.length;
                 const subnetOwner = subnetHosts.map((h) => getWhoisOwner(h)).find((o) => o.length > 0) ?? "";
                 return (
                   <div key={s.id}>
@@ -3649,25 +3865,33 @@ export default function MissionDetailPage() {
                       onContextMenu={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
+                        setSelectedNode({ type: "subnet", id: s.id });
                         setContextMenu({
                           x: e.clientX,
                           y: e.clientY,
                           items: [
                             { label: "Expand/Collapse", onClick: () => toggleExpandCollapse(key) },
+                            { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
+                            s.in_scope !== false
+                              ? { label: "Move out of scope", onClick: () => handleMoveSubnetScope(s.id, false) }
+                              : { label: "Move back into scope", onClick: () => handleMoveSubnetScope(s.id, true) },
                             { label: "Add Host", onClick: () => setAddHostModal({ subnetId: s.id }) },
                             { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "subnet", subnet: s }) },
                             { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "subnet", parentId: s.id, contextLabel: `Subnet ${s.cidr}${s.name ? ` (${s.name})` : ""}` }) },
-                            { label: "Import Hosts", onClick: () => setImportHostsModal({ type: "subnet", id: s.id, cidr: s.cidr, name: s.name }) },
+                            { label: "Import scan results", onClick: () => setImportHostsModal({ type: "subnet", id: s.id, cidr: s.cidr, name: s.name }) },
                             { label: "Rename", onClick: () => setRenameSubnetModal(s) },
                             { label: "Delete", onClick: () => setDeleteSubnetModal(s) },
-                          ],
+                          ].filter(Boolean),
                         });
                       }}
                     >
                       <span style={{ width: 14 }}>{isExp ? "▼" : "▶"}</span>
                       {s.cidr}
-                      {s.name && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({s.name})</span>}
-                      {subnetOwner && <span style={{ color: "var(--text-muted)", fontSize: 11, marginLeft: 6 }}>{subnetOwner}</span>}
+                      {(s.name || subnetOwner) && (
+                        <span style={{ color: "var(--text-muted)", fontSize: 11 }}>
+                          ({s.name || subnetOwner})
+                        </span>
+                      )}
                       <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({hostCount})</span>
                     </div>
                     {isExp && (
@@ -3720,8 +3944,8 @@ export default function MissionDetailPage() {
                   </div>
                 );
               })}
-              {/* Unresolved: hosts where DNS exists but IP is unresolved */}
-              {(!filterActive && !tagFilterActive ? (hostsBySubnet["_unresolved"] ?? []).length > 0 : effectiveHasMatchingUnresolved) && (
+              {/* Unresolved: in-scope hosts where DNS exists but IP is unresolved */}
+              {(!filterActive && !tagFilterActive ? (hostsBySubnet["_unresolved"] ?? []).filter((h) => h.in_scope !== false).length > 0 : effectiveHasMatchingUnresolved) && (
                 <div>
                   <div
                     className={"theme-tree-node" + (selectedNode?.type === "unresolved" ? " selected" : "")}
@@ -3738,6 +3962,7 @@ export default function MissionDetailPage() {
                         y: e.clientY,
                         items: [
                           { label: "Expand/Collapse", onClick: () => toggleExpandCollapse("unresolved") },
+                          { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
                         ],
                       });
                     }}
@@ -3747,21 +3972,102 @@ export default function MissionDetailPage() {
                   </div>
                   {expanded.has("unresolved") &&
                     (hostsBySubnet["_unresolved"] ?? [])
+                      .filter((h) => h.in_scope !== false)
                       .filter((h) => !filterActive && !tagFilterActive || effectiveMatchingHostIds.has(h.id))
                       .map((h) => (
                         <div key={h.id}>{renderTreeHost(h, 2)}</div>
                       ))}
                 </div>
               )}
-              {/* Unassigned: hosts with real IP but no subnet */}
-              {(filterActive || tagFilterActive ? [...effectiveMatchingUnassignedHostIds].map((id) => hosts.find((h) => h.id === id)).filter(Boolean) as Host[] : (hostsBySubnet["_unassigned"] ?? [])).map((h) => (
+              {/* Unassigned: in-scope hosts with real IP but no subnet */}
+              {(filterActive || tagFilterActive ? [...effectiveMatchingUnassignedHostIds].map((id) => hosts.find((h) => h.id === id)).filter((h): h is Host => !!h && h.in_scope !== false) : (hostsBySubnet["_unassigned"] ?? []).filter((h) => h.in_scope !== false)).map((h) => (
                 <div key={h.id}>{renderTreeHost(h, 1)}</div>
               ))}
+              {/* Out of scope: subnets and hosts moved out of scope */}
+              <div
+                className={"theme-tree-node" + (selectedNode?.type === "out-of-scope" ? " selected" : "")}
+                style={{ ...nodeStyle(1), marginTop: 4, color: "var(--text-muted)" }}
+                onClick={() => {
+                  toggleExpand("out-of-scope");
+                  setSelectedNode({ type: "out-of-scope" });
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setContextMenu({
+                    x: e.clientX,
+                    y: e.clientY,
+                    items: [
+                    { label: "Expand/Collapse", onClick: () => toggleExpandCollapse("out-of-scope") },
+                    { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
+                  ],
+                  });
+                }}
+              >
+                <span style={{ width: 14 }}>{expanded.has("out-of-scope") ? "▼" : "▶"}</span>
+                Out of scope
+              </div>
+              {expanded.has("out-of-scope") && (
+                <>
+                  {outOfScopeSubnets.map((s) => {
+                    const key = `subnet:${s.id}`;
+                    const isExp = expanded.has(key);
+                    const isSel = selectedNode?.type === "subnet" && selectedNode.id === s.id;
+                    const subnetHosts = hostsBySubnet[s.id] ?? [];
+                    const subnetOwner = subnetHosts.map((h) => getWhoisOwner(h)).find((o) => o.length > 0) ?? "";
+                    return (
+                      <div key={s.id}>
+                        <div
+                          className={"theme-tree-node" + (isSel ? " selected" : "")}
+                          style={{ ...nodeStyle(2), color: "var(--text-muted)" }}
+                          onClick={() => { toggleExpand(key); setSelectedNode({ type: "subnet", id: s.id }); }}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setSelectedNode({ type: "subnet", id: s.id });
+                            setContextMenu({
+                              x: e.clientX,
+                              y: e.clientY,
+                            items: [
+                            { label: "Expand/Collapse", onClick: () => toggleExpandCollapse(key) },
+                            { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
+                            { label: "Move back into scope", onClick: () => handleMoveSubnetScope(s.id, true) },
+                            { label: "Add Host", onClick: () => setAddHostModal({ subnetId: s.id }) },
+                            { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "subnet", subnet: s }) },
+                            { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "subnet", parentId: s.id, contextLabel: `Subnet ${s.cidr}${s.name ? ` (${s.name})` : ""}` }) },
+                            { label: "Import scan results", onClick: () => setImportHostsModal({ type: "subnet", id: s.id, cidr: s.cidr, name: s.name }) },
+                            { label: "Rename", onClick: () => setRenameSubnetModal(s) },
+                            { label: "Delete", onClick: () => setDeleteSubnetModal(s) },
+                          ].filter(Boolean),
+                            });
+                          }}
+                        >
+                          <span style={{ width: 14 }}>{isExp ? "▼" : "▶"}</span>
+                          {s.cidr}
+                          {(s.name || subnetOwner) && (
+                            <span style={{ color: "var(--text-dim)", fontSize: 11 }}>({s.name || subnetOwner})</span>
+                          )}
+                          <span style={{ color: "var(--text-dim)", fontSize: 11 }}> ({subnetHosts.length})</span>
+                        </div>
+                        {isExp && subnetHosts.map((h) => (
+                          <div key={h.id}>{renderTreeHost(h, 3, true)}</div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                  {standaloneOutOfScopeHosts.map((h) => (
+                    <div key={h.id}>{renderTreeHost(h, 2, true)}</div>
+                  ))}
+                </>
+              )}
+                  </>
+                );
+              })()}
             </>
           )}
           <div
             className={"theme-tree-node" + (selectedNode?.type === "vulnerabilities" ? " selected" : "")}
-            style={{ ...nodeStyle(0), paddingLeft: 12, marginTop: 8 }}
+            style={{ ...nodeStyle(0), paddingLeft: 12 }}
             onClick={(ev) => {
               ev.stopPropagation();
               toggleExpand("vulnerabilities", () => loadVulnDefinitions());
@@ -3776,6 +4082,7 @@ export default function MissionDetailPage() {
                 y: ev.clientY,
                 items: [
                   { label: "Expand/Collapse", onClick: () => toggleExpandCollapse("vulnerabilities") },
+                  { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
                   { label: "Add Vulnerability", onClick: () => setVulnModal({ mode: "add" }) },
                   { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "vulnerabilities" }) },
                   { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "vulnerabilities", contextLabel: "Vulnerabilities" }) },
@@ -3954,7 +4261,10 @@ export default function MissionDetailPage() {
               Todos
               {projectTodos.length > 0 && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({projectTodos.length})</span>}
             </div>
-            {expanded.has("todos-root") &&
+            {expanded.has("todos-root") && (
+              projectTodos.length === 0 ? (
+                <div className="theme-tree-node" style={{ ...nodeStyle(1), paddingLeft: 12, color: "var(--text-dim)", fontStyle: "italic" }}>None</div>
+              ) : (
               projectTodos.map((t) => {
                 const isSel = selectedNode?.type === "todo" && selectedNode.id === t.id;
                 return (
@@ -3968,7 +4278,9 @@ export default function MissionDetailPage() {
                     {t.title}
                   </div>
                 );
-              })}
+              })
+              )
+            )}
           </div>
           <div>
             <div
@@ -3981,17 +4293,17 @@ export default function MissionDetailPage() {
               }}
             >
               <span style={{ width: 14 }}>{expanded.has("tags-root") ? "▼" : "▶"}</span>
-              <Tag style={navIconStyle} />
+              <Hash style={navIconStyle} />
               Tags
               {projectTags.length > 0 && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({projectTags.length})</span>}
             </div>
             {expanded.has("tags-root") && (
               <>
                 {projectTags.length === 0 ? (
-                  <div className="theme-tree-node" style={{ ...nodeStyle(1), paddingLeft: 12, color: "var(--text-dim)", fontStyle: "italic" }}>No tags in this mission</div>
-                ) : (
+                <div className="theme-tree-node" style={{ ...nodeStyle(1), paddingLeft: 12, color: "var(--text-dim)", fontStyle: "italic" }}>None</div>
+              ) : (
                   projectTags.map((t) => {
-                    const isSel = selectedNode?.type === "tag-filter" && selectedNode.tagId === t.id;
+                    const isSel = (selectedNode?.type === "tag-filter" && selectedNode.tagId === t.id) || activeTagFilterState?.tagId === t.id;
                     const count = (hostIdsByTagId[t.id] ?? new Set()).size;
                     return (
                       <div
@@ -4000,10 +4312,16 @@ export default function MissionDetailPage() {
                         style={{ ...nodeStyle(1), paddingLeft: 12, color: t.color ?? "var(--text)" }}
                         onClick={(ev) => {
                           ev.stopPropagation();
-                          setSelectedNode(isSel ? null : { type: "tag-filter", tagId: t.id, tagName: t.name });
+                          if (isSel) {
+                            setActiveTagFilterState(null);
+                            setSelectedNode(null);
+                          } else {
+                            setActiveTagFilterState({ tagId: t.id, tagName: t.name });
+                            setSelectedNode({ type: "tag-filter", tagId: t.id, tagName: t.name });
+                          }
                         }}
                       >
-                        <span style={{ width: 14 }}>•</span>
+                        <span style={{ width: 14 }}><Hash style={{ width: 12, height: 12, opacity: 0.9 }} /></span>
                         {t.name}
                         {count > 0 && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({count})</span>}
                       </div>
@@ -4027,17 +4345,40 @@ export default function MissionDetailPage() {
               setContextMenu({
                 x: e.clientX,
                 y: e.clientY,
-                items: [{ label: "Expand/Collapse", onClick: () => toggleExpandCollapse("custom-reports") }],
+                items: [
+                  { label: "Expand/Collapse", onClick: () => toggleExpandCollapse("custom-reports") },
+                  { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
+                ],
               });
             }}
           >
             <span style={{ width: 14 }}>{expanded.has("custom-reports") ? "▼" : "▶"}</span>
             <FileText style={navIconStyle} />
             Custom Reports
+            {savedReports.length > 0 && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({savedReports.length})</span>}
           </div>
           {expanded.has("custom-reports") && (
             <>
-              {savedReports.map((sr) => {
+              <div
+                className={"theme-tree-node" + (selectedNode?.type === "report-builder" ? " selected" : "")}
+                style={{ ...nodeStyle(1), paddingLeft: 12 }}
+                onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "report-builder" }); }}
+              >
+                <span style={{ width: 14 }}>▸</span>
+                Report builder
+              </div>
+              <div
+                className={"theme-tree-node" + (selectedNode?.type === "predefined-reports" ? " selected" : "")}
+                style={{ ...nodeStyle(1), paddingLeft: 12 }}
+                onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "predefined-reports" }); }}
+              >
+                <span style={{ width: 14 }}>▸</span>
+                Predefined reports
+              </div>
+              {savedReports.length === 0 ? (
+                <div className="theme-tree-node" style={{ ...nodeStyle(1), paddingLeft: 12, color: "var(--text-dim)", fontStyle: "italic" }}>No saved reports</div>
+              ) : (
+              savedReports.map((sr) => {
                 const isSel = selectedNode?.type === "saved-report" && selectedNode.id === sr.id;
                 return (
                   <div
@@ -4050,7 +4391,91 @@ export default function MissionDetailPage() {
                     {sr.name}
                   </div>
                 );
-              })}
+              }              )
+              )}
+            </>
+          )}
+          <div
+            className="theme-tree-node"
+            style={{ ...nodeStyle(0), paddingLeft: 12 }}
+            onClick={(ev) => {
+              ev.stopPropagation();
+              toggleExpand("tools");
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setContextMenu({
+                x: e.clientX,
+                y: e.clientY,
+                items: [
+                  { label: "Expand/Collapse", onClick: () => toggleExpandCollapse("tools") },
+                  { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
+                ],
+              });
+            }}
+          >
+            <span style={{ width: 14 }}>{expanded.has("tools") ? "▼" : "▶"}</span>
+            <Wrench style={navIconStyle} />
+            Tools
+          </div>
+          {expanded.has("tools") && (
+            <>
+              <div
+                className={"theme-tree-node" + (selectedNode?.type === "tools-diff" ? " selected" : "")}
+                style={{ ...nodeStyle(1), paddingLeft: 12 }}
+                onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "tools-diff" }); }}
+              >
+                <span style={{ width: 14 }}>▸</span>
+                Diff
+              </div>
+              <div
+                className="theme-tree-node"
+                style={{ ...nodeStyle(1), paddingLeft: 12 }}
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  toggleExpand("tools-decoder");
+                }}
+              >
+                <span style={{ width: 14 }}>{expanded.has("tools-decoder") ? "▼" : "▶"}</span>
+                Decoder
+              </div>
+              {expanded.has("tools-decoder") && (
+                <>
+                  <div
+                    className={"theme-tree-node" + (selectedNode?.type === "tools-decoder-base" ? " selected" : "")}
+                    style={{ ...nodeStyle(2), paddingLeft: 12 }}
+                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "tools-decoder-base" }); }}
+                  >
+                    <span style={{ width: 14 }}>▸</span>
+                    Base
+                  </div>
+                  <div
+                    className={"theme-tree-node" + (selectedNode?.type === "tools-decoder-xor" ? " selected" : "")}
+                    style={{ ...nodeStyle(2), paddingLeft: 12 }}
+                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "tools-decoder-xor" }); }}
+                  >
+                    <span style={{ width: 14 }}>▸</span>
+                    xor
+                  </div>
+                  <div
+                    className={"theme-tree-node" + (selectedNode?.type === "tools-decoder-jwt" ? " selected" : "")}
+                    style={{ ...nodeStyle(2), paddingLeft: 12 }}
+                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "tools-decoder-jwt" }); }}
+                  >
+                    <span style={{ width: 14 }}>▸</span>
+                    json webtoken
+                  </div>
+                </>
+              )}
+              <div
+                className={"theme-tree-node" + (selectedNode?.type === "tools-deduplication" ? " selected" : "")}
+                style={{ ...nodeStyle(1), paddingLeft: 12 }}
+                onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "tools-deduplication" }); }}
+              >
+                <span style={{ width: 14 }}>▸</span>
+                Deduplication
+              </div>
             </>
           )}
         </aside>

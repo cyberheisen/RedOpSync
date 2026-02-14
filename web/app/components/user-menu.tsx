@@ -10,6 +10,7 @@ import { ProfileModal } from "./profile-modal";
 type User = { id: string; username: string; role: string } | null;
 
 const DEFAULT_AVATAR = "/redop.png";
+const AVATAR_SIZE = 44;
 
 export function UserMenu() {
   const router = useRouter();
@@ -101,8 +102,8 @@ export function UserMenu() {
           cursor: "pointer",
           borderRadius: "50%",
           overflow: "hidden",
-          width: 36,
-          height: 36,
+          width: AVATAR_SIZE,
+          height: AVATAR_SIZE,
         }}
         aria-label="User menu"
       >
@@ -110,8 +111,8 @@ export function UserMenu() {
           src={avatarSrc}
           alt=""
           style={{
-            width: 36,
-            height: 36,
+            width: AVATAR_SIZE,
+            height: AVATAR_SIZE,
             objectFit: "cover",
             borderRadius: "50%",
             display: "block",

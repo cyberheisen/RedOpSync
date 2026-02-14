@@ -427,6 +427,25 @@ def create_tag(
     return TagRead.model_validate(tag)
 
 
+@router.delete("/{project_id}/tags/{tag_id}", status_code=204)
+def delete_tag(
+    project_id: UUID,
+    tag_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a tag from the project (mission). Cascades to item_tags."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    tag = db.query(Tag).filter(Tag.id == tag_id, Tag.project_id == project_id).first()
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    db.delete(tag)
+    db.commit()
+    return None
+
+
 @router.get("/{project_id}/item-tags", response_model=list[ItemTagRead])
 def list_item_tags(
     project_id: UUID,

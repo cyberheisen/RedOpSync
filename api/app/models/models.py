@@ -59,6 +59,7 @@ class Subnet(Base):
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     cidr = Column(String(64), nullable=False)
     name = Column(String(255), nullable=True)
+    in_scope = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
     project = relationship("Project", back_populates="subnets")
@@ -76,6 +77,7 @@ class Host(Base):
     tags = Column(ARRAY(String), nullable=True, default=list)
     status = Column(String(64), nullable=True, default="unknown")
     whois_data = Column(JSONB, nullable=True)
+    in_scope = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 

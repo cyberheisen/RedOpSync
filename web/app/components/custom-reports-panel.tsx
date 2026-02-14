@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { apiUrl, formatApiErrorDetail } from "../lib/api";
+import { ColumnPicker } from "./column-picker";
 
 export type ReportConfig = { id: string; name: string };
 
@@ -33,6 +34,8 @@ type CustomReportsPanelProps = {
   onToast?: (msg: string) => void;
   savedReports?: SavedReportItem[];
   onSavedReportsChange?: () => void;
+  /** "all" = both sections (default), "builder" = report builder only, "predefined" = predefined reports only */
+  mode?: "all" | "builder" | "predefined";
 };
 
 function formatRowsToText(rows: Record<string, unknown>[]): string {
@@ -82,7 +85,7 @@ const FILTER_EXAMPLES = [
   "unresolved == false",
 ];
 
-export function CustomReportsPanel({ projectId, subnets, onToast, savedReports = [], onSavedReportsChange }: CustomReportsPanelProps) {
+export function CustomReportsPanel({ projectId, subnets, onToast, savedReports = [], onSavedReportsChange, mode = "all" }: CustomReportsPanelProps) {
   const [builderColumns, setBuilderColumns] = useState<BuilderColumns>({});
   const [builderDataSource, setBuilderDataSource] = useState("hosts");
   const [builderSelectedCols, setBuilderSelectedCols] = useState<string[]>(["ip", "hostname"]);
@@ -261,13 +264,18 @@ export function CustomReportsPanel({ projectId, subnets, onToast, savedReports =
   const showPortFilter = selectedType === "open_ports";
   const showSeverityFilter = selectedType === "vulns_flat" || selectedType === "vulns_by_severity";
 
+  const showBuilder = mode === "all" || mode === "builder";
+  const showPredefined = mode === "all" || mode === "predefined";
+
   return (
     <div style={{ padding: 24 }}>
-      <h2 style={{ margin: "0 0 16px", fontSize: "1.25rem" }}>Custom Reports</h2>
+      {mode === "all" && <h2 style={{ margin: "0 0 16px", fontSize: "1.25rem" }}>Custom Reports</h2>}
+      {mode === "builder" && <h2 style={{ margin: "0 0 16px", fontSize: "1.25rem" }}>Report builder</h2>}
+      {mode === "predefined" && <h2 style={{ margin: "0 0 16px", fontSize: "1.25rem" }}>Predefined reports</h2>}
 
-      {/* Report Builder - Top */}
-      <section style={{ marginBottom: 40 }}>
-        <h3 style={{ margin: "0 0 12px", fontSize: "1rem", fontWeight: 600 }}>Report builder</h3>
+      {showBuilder && (
+      <section style={{ marginBottom: mode === "all" ? 40 : 0 }}>
+        {mode === "all" && <h3 style={{ margin: "0 0 12px", fontSize: "1rem", fontWeight: 600 }}>Report builder</h3>}
         <p style={{ color: "var(--text-muted)", marginBottom: 16, fontSize: 14 }}>
           Select columns and criteria using the filter language (e.g. <code style={{ background: "var(--bg-panel)", padding: "1px 4px", borderRadius: 4 }}>ip contains "10."</code>, <code style={{ background: "var(--bg-panel)", padding: "1px 4px", borderRadius: 4 }}>severity >= High</code>).
         </p>
@@ -296,21 +304,12 @@ export function CustomReportsPanel({ projectId, subnets, onToast, savedReports =
 
         <div style={{ marginBottom: 12 }}>
           <label style={{ display: "block", fontSize: 12, color: "var(--text-muted)", marginBottom: 6 }}>Columns to include</label>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {(builderColumns[builderDataSource] ?? []).map(([id, label]) => (
-              <label key={id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
-                <input
-                  type="checkbox"
-                  checked={builderSelectedCols.includes(id)}
-                  onChange={(e) => {
-                    if (e.target.checked) setBuilderSelectedCols((c) => [...c, id]);
-                    else setBuilderSelectedCols((c) => c.filter((x) => x !== id));
-                  }}
-                />
-                {label}
-              </label>
-            ))}
-          </div>
+          <ColumnPicker
+            options={builderColumns[builderDataSource] ?? []}
+            selected={builderSelectedCols}
+            onChange={setBuilderSelectedCols}
+            placeholder="Search columns…"
+          />
         </div>
 
         <div style={{ marginBottom: 12 }}>
@@ -449,12 +448,13 @@ export function CustomReportsPanel({ projectId, subnets, onToast, savedReports =
           </pre>
         </div>
       </section>
+      )}
 
-      <hr style={{ border: "none", borderTop: "1px solid var(--border)", margin: "24px 0" }} />
+      {mode === "all" && <hr style={{ border: "none", borderTop: "1px solid var(--border)", margin: "24px 0" }} />}
 
-      {/* Predefined Reports - Bottom */}
+      {showPredefined && (
       <section>
-        <h3 style={{ margin: "0 0 12px", fontSize: "1rem", fontWeight: 600 }}>Predefined reports</h3>
+        {mode === "all" && <h3 style={{ margin: "0 0 12px", fontSize: "1rem", fontWeight: 600 }}>Predefined reports</h3>}
         <p style={{ color: "var(--text-muted)", marginBottom: 16, fontSize: 14 }}>
           Select a report type, apply filters, preview, and export.
         </p>
@@ -703,6 +703,7 @@ export function CustomReportsPanel({ projectId, subnets, onToast, savedReports =
         </>
       )}
       </section>
+      )}
     </div>
   );
 }

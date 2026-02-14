@@ -1,6 +1,7 @@
 import { AuthGuard } from "./components/auth-guard";
 import { Logo } from "./components/logo";
 import { UserMenu } from "./components/user-menu";
+import { APP_VERSION } from "./lib/version";
 
 export const metadata = {
   title: "RedOpSync",
@@ -83,6 +84,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               }}
             >
               <span>© {new Date().getFullYear()} RedOpSync</span>
+              <span>·</span>
+              <span>v{APP_VERSION}</span>
               <span>·</span>
               <span>Licensed under the MIT License</span>
               <span>·</span>

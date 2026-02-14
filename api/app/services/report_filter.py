@@ -359,3 +359,33 @@ def entity_matches_filter(pf: ParsedFilter, entity_type: str, entity: Any, host:
     if entity_type == "vuln" and host and vd and vi:
         return _host_matches(pf, host, subnet_cidr) or _vuln_matches(pf, vd, vi)
     return False
+
+
+def parse_filters(expressions: list[str]) -> list[ParsedFilter]:
+    """Parse multiple filter expressions; returns only valid parsed filters (skips invalid/empty)."""
+    out: list[ParsedFilter] = []
+    for raw in (expressions or []):
+        s = (raw or "").strip()
+        if not s:
+            continue
+        pf = parse_filter(s)
+        if pf is not None:
+            out.append(pf)
+    return out
+
+
+def entity_matches_filters(
+    parsed_filters: list[ParsedFilter],
+    entity_type: str,
+    entity: Any,
+    host: Any = None,
+    port: Any = None,
+    vd: Any = None,
+    vi: Any = None,
+    subnet_cidr: str | None = None,
+) -> bool:
+    """True iff entity matches every parsed filter (or there are no filters)."""
+    for pf in parsed_filters or []:
+        if not entity_matches_filter(pf, entity_type, entity, host=host, port=port, vd=vd, vi=vi, subnet_cidr=subnet_cidr):
+            return False
+    return True

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
-import { User, FolderOpen, Lock, Package, Settings, ScrollText } from "lucide-react";
+import { User, FolderOpen, Lock, Package, Settings, ScrollText, Tag } from "lucide-react";
 import { apiUrl } from "../lib/api";
 import { Logo } from "../components/logo";
 
@@ -14,6 +14,7 @@ const navIconStyle = { width: 18, height: 18, flexShrink: 0 };
 const navItems: { href: string; label: string; Icon: React.ComponentType<{ style?: React.CSSProperties }> }[] = [
   { href: "/admin/users", label: "Users", Icon: User },
   { href: "/admin/missions", label: "Missions", Icon: FolderOpen },
+  { href: "/admin/tags", label: "Tags", Icon: Tag },
   { href: "/admin/locks", label: "Locks", Icon: Lock },
   { href: "/admin/imports-exports", label: "Imports / Exports", Icon: Package },
   { href: "/admin/system", label: "System", Icon: Settings },

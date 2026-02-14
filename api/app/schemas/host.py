@@ -20,6 +20,7 @@ class HostUpdate(BaseModel):
     dns_name: str | None = Field(None, max_length=255)
     tags: Sequence[str] | None = None
     status: str | None = Field(None, max_length=64)
+    in_scope: bool | None = None
 
 
 class HostRead(BaseModel):
@@ -31,6 +32,7 @@ class HostRead(BaseModel):
     tags: list[str] | None
     status: str | None
     whois_data: dict | None = None
+    in_scope: bool = True
     created_at: datetime
     updated_at: datetime
 

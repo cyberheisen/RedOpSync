@@ -15,9 +15,10 @@ type Props = {
 };
 
 type ImportResult = {
-  format?: "nmap" | "gowitness" | "text";
+  format?: "nmap" | "gowitness" | "text" | "whois";
   hosts_created: number;
   hosts_updated?: number;
+  subnets_updated?: number;
   ports_created: number;
   ports_updated?: number;
   evidence_created?: number;
@@ -33,24 +34,19 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const subtext =
     context.type === "scope"
-      ? "Import Nmap, GoWitness, plain text (one host per line), or whois/RDAP JSON into this mission."
+      ? "Import scan results into this mission."
       : `Import into Subnet: ${context.cidr}${context.name ? ` (${context.name})` : ""}`;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (f) {
-      const ext = f.name.split(".").pop()?.toLowerCase();
-      if (ext === "xml" || ext === "zip" || ext === "txt" || ext === "json") {
-        setError(null);
-        setSelectedFile(f);
-      } else {
-        setError("Use Nmap XML (.xml), ZIP (.zip), plain text (.txt), or whois JSON (.json).");
-        setSelectedFile(null);
-      }
+      setError(null);
+      setSelectedFile(f);
     } else {
       setSelectedFile(null);
       setError(null);
@@ -79,6 +75,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
       const hasData =
         (data.hosts_created ?? 0) > 0 ||
         (data.hosts_updated ?? 0) > 0 ||
+        (data.subnets_updated ?? 0) > 0 ||
         (data.ports_created ?? 0) > 0 ||
         (data.ports_updated ?? 0) > 0 ||
         (data.screenshots_imported ?? 0) > 0 ||
@@ -124,14 +121,21 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 style={{ margin: "0 0 4px", fontSize: "1.25rem" }}>Import Host/Scan Results</h2>
-        <p style={{ margin: "0 0 20px", fontSize: 14, color: "var(--text-muted)" }}>{subtext}</p>
+        <h2 style={{ margin: "0 0 4px", fontSize: "1.25rem" }}>Import scan results</h2>
+        <p style={{ margin: "0 0 8px", fontSize: 14, color: "var(--text-muted)" }}>{subtext}</p>
+        <p style={{ margin: "0 0 20px", fontSize: 13 }}>
+          <button
+            type="button"
+            className="theme-btn theme-btn-ghost"
+            style={{ padding: 0, minHeight: 0, textDecoration: "underline", color: "var(--accent)" }}
+            onClick={() => setShowHelp(true)}
+          >
+            Supported tools and how to import
+          </button>
+        </p>
 
         {!result ? (
           <>
-            <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--text-muted)" }}>
-              Supports Nmap XML (-oX), GoWitness ZIP, or plain text (one host per line). Format is auto-detected.
-            </p>
             <input
               ref={fileInputRef}
               type="file"
@@ -150,7 +154,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
               }}
               onClick={handleFileClick}
             >
-              {selectedFile ? selectedFile.name : "Choose .xml, .zip, or .txt file"}
+              {selectedFile ? selectedFile.name : "Choose file"}
             </div>
             {error && (
               <p style={{ margin: "0 0 12px", color: "var(--error)", fontSize: 14 }}>{error}</p>
@@ -189,7 +193,10 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
               {(result.hosts_updated ?? 0) > 0 && (
                 <p style={{ margin: "0 0 4px" }}>Hosts updated: {result.hosts_updated}</p>
               )}
-              {result.format !== "text" && (
+              {(result.subnets_updated ?? 0) > 0 && (
+                <p style={{ margin: "0 0 4px" }}>Subnets updated: {result.subnets_updated}</p>
+              )}
+              {result.format !== "text" && result.format !== "whois" && (
                 <>
                   <p style={{ margin: "0 0 4px" }}>Ports created: {result.ports_created}</p>
               {(result.ports_updated ?? 0) > 0 && (
@@ -231,6 +238,60 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
           </>
         )}
       </div>
+
+      {showHelp && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "rgba(0,0,0,0.6)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1001,
+          }}
+          onClick={() => setShowHelp(false)}
+        >
+          <div
+            style={{
+              backgroundColor: "var(--bg-panel)",
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              padding: 24,
+              maxWidth: 480,
+              width: "90%",
+              maxHeight: "80vh",
+              overflow: "auto",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: "0 0 16px", fontSize: "1.1rem" }}>Supported tools and how to import</h3>
+            <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14, color: "var(--text)", lineHeight: 1.6 }}>
+              <li style={{ marginBottom: 10 }}>
+                <strong>Nmap</strong>: Nmap XML file (e.g. <code style={{ fontSize: 12 }}>-oX</code> output).
+              </li>
+              <li style={{ marginBottom: 10 }}>
+                <strong>GoWitness</strong>: Results JSON file and all screenshots in a single ZIP.
+              </li>
+              <li style={{ marginBottom: 10 }}>
+                <strong>Plain text</strong>: One host per line (optional hostname).
+              </li>
+              <li style={{ marginBottom: 10 }}>
+                <strong>Whois/RDAP</strong>: JSON array of objects. Required: <code style={{ fontSize: 12 }}>ip</code> (string, host IP). Optional fields (stored in whois_data): <code style={{ fontSize: 12 }}>asn</code>, <code style={{ fontSize: 12 }}>asn_description</code>, <code style={{ fontSize: 12 }}>asn_country</code>, <code style={{ fontSize: 12 }}>country</code>, <code style={{ fontSize: 12 }}>network_name</code>, <code style={{ fontSize: 12 }}>cidr</code>, <code style={{ fontSize: 12 }}>network_type</code>, <code style={{ fontSize: 12 }}>asn_registry</code>. Sample:
+                <pre style={{ margin: "8px 0 0", padding: 10, background: "var(--bg-elevated)", borderRadius: 6, fontSize: 11, overflow: "auto" }}>{`[
+  { "ip": "203.0.113.10", "asn": "64496", "asn_description": "Example Org", "country": "US" },
+  { "ip": "198.51.100.1", "network_name": "Example Network" }
+]`}</pre>
+              </li>
+            </ul>
+            <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
+              <button type="button" className="theme-btn theme-btn-primary" onClick={() => setShowHelp(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

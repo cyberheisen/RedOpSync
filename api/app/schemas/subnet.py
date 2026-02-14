@@ -13,6 +13,7 @@ class SubnetCreate(BaseModel):
 class SubnetUpdate(BaseModel):
     cidr: str | None = Field(None, min_length=1, max_length=64)
     name: str | None = None
+    in_scope: bool | None = None
 
 
 class SubnetRead(BaseModel):
@@ -20,6 +21,7 @@ class SubnetRead(BaseModel):
     project_id: UUID
     cidr: str
     name: str | None
+    in_scope: bool = True
     created_at: datetime
 
     model_config = {"from_attributes": True}
