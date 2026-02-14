@@ -208,6 +208,14 @@ function hostLabel(h: { ip: string; dns_name: string | null }): string {
   return h.dns_name ? `${h.ip} (${h.dns_name})` : h.ip;
 }
 
+/** Whois "owner" from host (network/org name) for display next to subnet */
+function getWhoisOwner(h: { whois_data?: Record<string, unknown> | null }): string {
+  const w = h.whois_data;
+  if (!w || typeof w !== "object") return "";
+  const v = (w.network_name ?? w.asn_description) ?? "";
+  return String(v).trim();
+}
+
 function formatDate(s: string | null): string {
   if (!s) return "—";
   try {
@@ -2891,11 +2899,13 @@ export default function MissionDetailPage() {
       const subnet = subnets.find((s) => s.id === selectedNode.id);
       if (!subnet) return null;
       const subnetHosts = hostsBySubnet[subnet.id] ?? [];
+      const subnetOwner = subnetHosts.map((h) => getWhoisOwner(h)).find((o) => o.length > 0) ?? "";
       return (
         <div style={{ padding: 24 }}>
           <h2 style={{ margin: "0 0 16px", fontSize: "1.25rem" }}>
             {subnet.cidr}
             {subnet.name && <span style={{ color: "var(--text-muted)", fontWeight: 400, marginLeft: 8 }}>({subnet.name})</span>}
+            {subnetOwner && <span style={{ color: "var(--text-muted)", fontWeight: 400, marginLeft: 8 }}>{subnetOwner}</span>}
           </h2>
           <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>{subnetHosts.length} host(s). Right-click for actions.</p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
@@ -3629,6 +3639,7 @@ export default function MissionDetailPage() {
                 const isSel = selectedNode?.type === "subnet" && selectedNode.id === s.id;
                 const subnetHosts = (hostsBySubnet[s.id] ?? []).filter((h) => !filterActive && !tagFilterActive || effectiveMatchingHostIds.has(h.id));
                 const hostCount = filterActive ? subnetHosts.length : (hostsBySubnet[s.id] ?? []).length;
+                const subnetOwner = subnetHosts.map((h) => getWhoisOwner(h)).find((o) => o.length > 0) ?? "";
                 return (
                   <div key={s.id}>
                     <div
@@ -3656,6 +3667,7 @@ export default function MissionDetailPage() {
                       <span style={{ width: 14 }}>{isExp ? "▼" : "▶"}</span>
                       {s.cidr}
                       {s.name && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({s.name})</span>}
+                      {subnetOwner && <span style={{ color: "var(--text-muted)", fontSize: 11, marginLeft: 6 }}>{subnetOwner}</span>}
                       <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({hostCount})</span>
                     </div>
                     {isExp && (
