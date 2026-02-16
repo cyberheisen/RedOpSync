@@ -38,9 +38,9 @@ type CustomReportsPanelProps = {
   mode?: "all" | "builder" | "predefined";
 };
 
-function formatRowsToText(rows: Record<string, unknown>[]): string {
+function formatRowsToText(rows: Record<string, unknown>[], columnKeys?: string[]): string {
   if (rows.length === 0) return "";
-  const keys = Object.keys(rows[0]!);
+  const keys = (columnKeys && columnKeys.length > 0) ? columnKeys : Object.keys(rows[0]!);
   const lines = rows.map((r) => {
     if (keys.length === 1) return String(r[keys[0]!] ?? "");
     return keys.map((k) => String(r[k] ?? "")).join("\t");
@@ -48,9 +48,9 @@ function formatRowsToText(rows: Record<string, unknown>[]): string {
   return lines.join("\n");
 }
 
-function formatRowsToCsv(rows: Record<string, unknown>[]): string {
+function formatRowsToCsv(rows: Record<string, unknown>[], columnKeys?: string[]): string {
   if (rows.length === 0) return "";
-  const keys = Object.keys(rows[0]!);
+  const keys = (columnKeys && columnKeys.length > 0) ? columnKeys : Object.keys(rows[0]!);
   const escape = (v: unknown) => {
     const s = String(v ?? "");
     if (s.includes(",") || s.includes('"') || s.includes("\n")) {
@@ -171,12 +171,14 @@ export function CustomReportsPanel({ projectId, subnets, onToast, savedReports =
       .finally(() => setBuilderLoading(false));
   }, [projectId, builderDataSource, builderSelectedCols, builderFilter, builderColumns]);
 
+  const builderColumnKeys = builderSelectedCols.length ? builderSelectedCols : (builderColumns[builderDataSource] ?? []).map(([id]) => id);
+
   const handleBuilderExport = () => {
     let content: string;
     let ext: string;
     let mime: string;
     if (builderExportFormat === "csv") {
-      content = formatRowsToCsv(builderRows);
+      content = formatRowsToCsv(builderRows, builderColumnKeys);
       ext = "csv";
       mime = "text/csv";
     } else if (builderExportFormat === "json") {
@@ -184,7 +186,7 @@ export function CustomReportsPanel({ projectId, subnets, onToast, savedReports =
       ext = "json";
       mime = "application/json";
     } else {
-      content = formatRowsToText(builderRows);
+      content = formatRowsToText(builderRows, builderColumnKeys);
       ext = "txt";
       mime = "text/plain";
     }
@@ -444,7 +446,7 @@ export function CustomReportsPanel({ projectId, subnets, onToast, savedReports =
               wordBreak: "break-all",
             }}
           >
-            {builderLoading ? "Loading…" : formatRowsToText(builderRows) || "(run report to preview)"}
+            {builderLoading ? "Loading…" : formatRowsToText(builderRows, builderColumnKeys) || "(run report to preview)"}
           </pre>
         </div>
       </section>

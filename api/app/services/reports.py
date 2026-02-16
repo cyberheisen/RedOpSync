@@ -338,19 +338,20 @@ def _run_builder(
             if "subnet_cidr" in cols:
                 row["subnet_cidr"] = s.cidr if s else None
             w = getattr(h, "whois_data", None)
-            if isinstance(w, dict):
-                if "whois_network" in cols:
-                    row["whois_network"] = (w.get("network_name") or w.get("asn_description")) or None
-                if "whois_asn" in cols:
-                    row["whois_asn"] = w.get("asn")
-                if "whois_country" in cols:
-                    row["whois_country"] = (w.get("country") or w.get("asn_country")) or None
-                if "whois_cidr" in cols:
-                    row["whois_cidr"] = w.get("cidr")
-                if "whois_type" in cols:
-                    row["whois_type"] = w.get("network_type")
-                if "whois_registry" in cols:
-                    row["whois_registry"] = w.get("asn_registry")
+            if not isinstance(w, dict):
+                w = {}
+            if "whois_network" in cols:
+                row["whois_network"] = (w.get("network_name") or w.get("asn_description")) or None
+            if "whois_asn" in cols:
+                row["whois_asn"] = w.get("asn")
+            if "whois_country" in cols:
+                row["whois_country"] = (w.get("country") or w.get("asn_country")) or None
+            if "whois_cidr" in cols:
+                row["whois_cidr"] = w.get("cidr")
+            if "whois_type" in cols:
+                row["whois_type"] = w.get("network_type")
+            if "whois_registry" in cols:
+                row["whois_registry"] = w.get("asn_registry")
             rows.append(row)
         return rows
 

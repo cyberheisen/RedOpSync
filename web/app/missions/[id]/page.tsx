@@ -25,6 +25,7 @@ import { CustomReportsPanel } from "../../components/custom-reports-panel";
 import { ToolsDecoderPanel } from "../../components/tools-decoder-panel";
 import { ToolsDiffPanel } from "../../components/tools-diff-panel";
 import { ToolsDeduplicationPanel } from "../../components/tools-deduplication-panel";
+import { ToolsPrettifyPanel } from "../../components/tools-prettify-panel";
 import { TodosPanel } from "../../components/todos-panel";
 import { AddTodoModal } from "../../components/add-todo-modal";
 import { Toast } from "../../components/toast";
@@ -38,7 +39,7 @@ import {
   type SeverityLevel,
   type VulnLike,
 } from "../../lib/severity";
-import { Globe, TriangleAlert, Tag, CheckSquare, FileText, HelpCircle, Hash, Network, Wrench } from "lucide-react";
+import { Globe, TriangleAlert, Tag, CheckSquare, FileText, HelpCircle, Hash, Network, Wrench, GitCompare, ScanText, Layers, Binary, Key, ListFilter, Sparkles, Braces, Code } from "lucide-react";
 
 type Subnet = {
   id: string;
@@ -189,6 +190,8 @@ type SelectedNode =
   | { type: "tools-decoder-xor" }
   | { type: "tools-decoder-jwt" }
   | { type: "tools-deduplication" }
+  | { type: "tools-prettify-json" }
+  | { type: "tools-prettify-javascript" }
   | null;
 
 const ICON = { notes: "≡" } as const;
@@ -1290,6 +1293,7 @@ export default function MissionDetailPage() {
     if (key === "host-vulns:" || key.startsWith("host-vulns:") || key.startsWith("port-evidence:") || key === "vulnerabilities") return out;
     if (key === "tools") {
       out.add("tools-decoder");
+      out.add("tools-prettify");
       return out;
     }
     return out;
@@ -2994,6 +2998,8 @@ export default function MissionDetailPage() {
     if (selectedNode.type === "tools-decoder-xor") return <ToolsDecoderPanel variant="xor" />;
     if (selectedNode.type === "tools-decoder-jwt") return <ToolsDecoderPanel variant="jwt" />;
     if (selectedNode.type === "tools-deduplication") return <ToolsDeduplicationPanel />;
+    if (selectedNode.type === "tools-prettify-json") return <ToolsPrettifyPanel variant="json" />;
+    if (selectedNode.type === "tools-prettify-javascript") return <ToolsPrettifyPanel variant="javascript" />;
     if (selectedNode.type === "todos")
       return (
         <TodosPanel
@@ -3720,7 +3726,7 @@ export default function MissionDetailPage() {
               </select>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, backgroundColor: "var(--bg-panel)", borderRadius: 6, border: "1px solid var(--border)", padding: "4px 8px" }}>
-              <span style={{ color: "var(--text-muted)", fontSize: 14 }} title="Filter">{(filterActive || tagFilterActive) ? "🔽" : "▸"}</span>
+              <span style={{ color: "var(--text-muted)", fontSize: 14 }} title="Filter">{(filterActive || tagFilterActive) ? "🔽" : "▶"}</span>
               <input
                 type="text"
                 className="theme-input"
@@ -4364,7 +4370,7 @@ export default function MissionDetailPage() {
                 style={{ ...nodeStyle(1), paddingLeft: 12 }}
                 onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "report-builder" }); }}
               >
-                <span style={{ width: 14 }}>▸</span>
+                <span style={{ width: 14 }}>▶</span>
                 Report builder
               </div>
               <div
@@ -4372,7 +4378,7 @@ export default function MissionDetailPage() {
                 style={{ ...nodeStyle(1), paddingLeft: 12 }}
                 onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "predefined-reports" }); }}
               >
-                <span style={{ width: 14 }}>▸</span>
+                <span style={{ width: 14 }}>▶</span>
                 Predefined reports
               </div>
               {savedReports.length === 0 ? (
@@ -4387,7 +4393,7 @@ export default function MissionDetailPage() {
                     style={{ ...nodeStyle(1), paddingLeft: 12, color: "var(--text-muted)" }}
                     onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "saved-report", id: sr.id }); }}
                   >
-                    <span style={{ width: 14 }}>▸</span>
+                    <span style={{ width: 14 }}>▶</span>
                     {sr.name}
                   </div>
                 );
@@ -4423,57 +4429,97 @@ export default function MissionDetailPage() {
             <>
               <div
                 className={"theme-tree-node" + (selectedNode?.type === "tools-diff" ? " selected" : "")}
-                style={{ ...nodeStyle(1), paddingLeft: 12 }}
+                style={nodeStyle(1)}
                 onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "tools-diff" }); }}
               >
-                <span style={{ width: 14 }}>▸</span>
+                <span style={{ width: 14 }}>▶</span>
+                <GitCompare style={navIconStyle} />
                 Diff
               </div>
               <div
                 className="theme-tree-node"
-                style={{ ...nodeStyle(1), paddingLeft: 12 }}
+                style={nodeStyle(1)}
                 onClick={(ev) => {
                   ev.stopPropagation();
                   toggleExpand("tools-decoder");
                 }}
               >
                 <span style={{ width: 14 }}>{expanded.has("tools-decoder") ? "▼" : "▶"}</span>
+                <ScanText style={navIconStyle} />
                 Decoder
               </div>
               {expanded.has("tools-decoder") && (
                 <>
                   <div
                     className={"theme-tree-node" + (selectedNode?.type === "tools-decoder-base" ? " selected" : "")}
-                    style={{ ...nodeStyle(2), paddingLeft: 12 }}
+                    style={nodeStyle(2)}
                     onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "tools-decoder-base" }); }}
                   >
-                    <span style={{ width: 14 }}>▸</span>
+                    <span style={{ width: 14 }}>▶</span>
+                    <Layers style={navIconStyle} />
                     Base
                   </div>
                   <div
-                    className={"theme-tree-node" + (selectedNode?.type === "tools-decoder-xor" ? " selected" : "")}
-                    style={{ ...nodeStyle(2), paddingLeft: 12 }}
-                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "tools-decoder-xor" }); }}
-                  >
-                    <span style={{ width: 14 }}>▸</span>
-                    xor
-                  </div>
-                  <div
                     className={"theme-tree-node" + (selectedNode?.type === "tools-decoder-jwt" ? " selected" : "")}
-                    style={{ ...nodeStyle(2), paddingLeft: 12 }}
+                    style={nodeStyle(2)}
                     onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "tools-decoder-jwt" }); }}
                   >
-                    <span style={{ width: 14 }}>▸</span>
-                    json webtoken
+                    <span style={{ width: 14 }}>▶</span>
+                    <Key style={navIconStyle} />
+                    JSON Webtoken
+                  </div>
+                  <div
+                    className={"theme-tree-node" + (selectedNode?.type === "tools-decoder-xor" ? " selected" : "")}
+                    style={nodeStyle(2)}
+                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "tools-decoder-xor" }); }}
+                  >
+                    <span style={{ width: 14 }}>▶</span>
+                    <Binary style={navIconStyle} />
+                    XOR
+                  </div>
+                </>
+              )}
+              <div
+                className="theme-tree-node"
+                style={nodeStyle(1)}
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  toggleExpand("tools-prettify");
+                }}
+              >
+                <span style={{ width: 14 }}>{expanded.has("tools-prettify") ? "▼" : "▶"}</span>
+                <Sparkles style={navIconStyle} />
+                Prettify
+              </div>
+              {expanded.has("tools-prettify") && (
+                <>
+                  <div
+                    className={"theme-tree-node" + (selectedNode?.type === "tools-prettify-json" ? " selected" : "")}
+                    style={nodeStyle(2)}
+                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "tools-prettify-json" }); }}
+                  >
+                    <span style={{ width: 14 }}>▶</span>
+                    <Braces style={navIconStyle} />
+                    JSON
+                  </div>
+                  <div
+                    className={"theme-tree-node" + (selectedNode?.type === "tools-prettify-javascript" ? " selected" : "")}
+                    style={nodeStyle(2)}
+                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "tools-prettify-javascript" }); }}
+                  >
+                    <span style={{ width: 14 }}>▶</span>
+                    <Code style={navIconStyle} />
+                    JavaScript
                   </div>
                 </>
               )}
               <div
                 className={"theme-tree-node" + (selectedNode?.type === "tools-deduplication" ? " selected" : "")}
-                style={{ ...nodeStyle(1), paddingLeft: 12 }}
+                style={nodeStyle(1)}
                 onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "tools-deduplication" }); }}
               >
-                <span style={{ width: 14 }}>▸</span>
+                <span style={{ width: 14 }}>▶</span>
+                <ListFilter style={navIconStyle} />
                 Deduplication
               </div>
             </>

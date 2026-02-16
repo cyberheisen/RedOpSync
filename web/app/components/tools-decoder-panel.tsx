@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import bs58 from "bs58";
 
 // RFC 4648 Base32 alphabet
