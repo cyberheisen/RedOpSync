@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { Bold, Italic, Heading, Link, Table as TableIcon } from "lucide-react";
 import { renderMarkdown } from "../lib/markdown";
 
 export type NoteAttachment = {
@@ -25,7 +26,7 @@ const ACCEPT = ".png,.jpg,.jpeg,.txt,.pdf";
 
 function getFileIcon(filename: string): string {
   const ext = filename.split(".").pop()?.toLowerCase();
-  if (["png", "jpg", "jpeg"].includes(ext ?? "")) return "🖼";
+  if (["png", "jpg", "jpeg"].includes((ext ?? ""))) return "🖼";
   if (ext === "pdf") return "📄";
   if (ext === "txt") return "📝";
   return "📎";
@@ -38,6 +39,84 @@ export function NoteEditorPanel({ contextLabel, note, onClose, onSave }: Props) 
   const [showPreview, setShowPreview] = useState(false);
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bodyTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const applyInsert = (newText: string, cursorStart: number, cursorEnd: number) => {
+    setBodyMd(newText);
+    requestAnimationFrame(() => {
+      bodyTextareaRef.current?.focus();
+      bodyTextareaRef.current?.setSelectionRange(cursorStart, cursorEnd);
+    });
+  };
+
+  const insertBold = () => {
+    const ta = bodyTextareaRef.current;
+    if (!ta) return;
+    const v = bodyMd;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const sel = v.slice(start, end);
+    const inner = sel || "";
+    const newText = v.slice(0, start) + "**" + inner + "**" + v.slice(end);
+    const pos = start + 2 + inner.length;
+    applyInsert(newText, pos, pos);
+  };
+
+  const insertItalic = () => {
+    const ta = bodyTextareaRef.current;
+    if (!ta) return;
+    const v = bodyMd;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const sel = v.slice(start, end);
+    const inner = sel || "";
+    const newText = v.slice(0, start) + "*" + inner + "*" + v.slice(end);
+    const pos = start + 1 + inner.length;
+    applyInsert(newText, pos, pos);
+  };
+
+  const insertHeader = () => {
+    const ta = bodyTextareaRef.current;
+    if (!ta) return;
+    const v = bodyMd;
+    const start = ta.selectionStart;
+    const lineStart = v.slice(0, start).lastIndexOf("\n") + 1;
+    const newText = v.slice(0, lineStart) + "## " + v.slice(lineStart);
+    const pos = lineStart + 3;
+    applyInsert(newText, pos, pos);
+  };
+
+  const insertLink = () => {
+    const ta = bodyTextareaRef.current;
+    if (!ta) return;
+    const v = bodyMd;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const sel = v.slice(start, end);
+    if (sel) {
+      const newText = v.slice(0, start) + "[" + sel + "]()" + v.slice(end);
+      const pos = start + 2 + sel.length + 2;
+      applyInsert(newText, pos, pos);
+    } else {
+      const newText = v.slice(0, start) + "[text](url)" + v.slice(start);
+      applyInsert(newText, start + 1, start + 5);
+    }
+  };
+
+  const insertTable = () => {
+    const ta = bodyTextareaRef.current;
+    if (!ta) return;
+    const v = bodyMd;
+    const start = ta.selectionStart;
+    const prefix = start > 0 && v[start - 1] !== "\n" ? "\n" : "";
+    const header = "| Col1 | Col2 |";
+    const separator = "\n| --- | --- |";
+    const bodyRow = "\n|  |  |";
+    const template = `${prefix}${header}${separator}${bodyRow}`;
+    const newText = v.slice(0, start) + template + v.slice(start);
+    const cursorPos = start + prefix.length + header.length + separator.length + 2;
+    applyInsert(newText, cursorPos, cursorPos);
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -164,19 +243,76 @@ export function NoteEditorPanel({ contextLabel, note, onClose, onSave }: Props) 
               dangerouslySetInnerHTML={{ __html: previewHtml || "<em>No content</em>" }}
             />
           ) : (
-            <textarea
-              value={bodyMd}
-              onChange={(e) => setBodyMd(e.target.value)}
-              placeholder="Supports markdown: headings, **bold**, *italic*, `code`, lists, [links](url)"
-              className="theme-input"
-              style={{
-                flex: 1,
-                minHeight: 200,
-                resize: "none",
-                fontFamily: "ui-monospace, monospace",
-                fontSize: 14,
-              }}
-            />
+            <>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 4,
+                  marginBottom: 6,
+                  flexShrink: 0,
+                }}
+              >
+                <button
+                  type="button"
+                  className="theme-btn theme-btn-ghost"
+                  style={{ padding: "4px 8px" }}
+                  onClick={insertBold}
+                  title="Bold"
+                >
+                  <Bold size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="theme-btn theme-btn-ghost"
+                  style={{ padding: "4px 8px" }}
+                  onClick={insertItalic}
+                  title="Italic"
+                >
+                  <Italic size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="theme-btn theme-btn-ghost"
+                  style={{ padding: "4px 8px" }}
+                  onClick={insertHeader}
+                  title="Heading"
+                >
+                  <Heading size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="theme-btn theme-btn-ghost"
+                  style={{ padding: "4px 8px" }}
+                  onClick={insertLink}
+                  title="Link"
+                >
+                  <Link size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="theme-btn theme-btn-ghost"
+                  style={{ padding: "4px 8px" }}
+                  onClick={insertTable}
+                  title="Table"
+                >
+                  <TableIcon size={16} />
+                </button>
+              </div>
+              <textarea
+                ref={bodyTextareaRef}
+                value={bodyMd}
+                onChange={(e) => setBodyMd(e.target.value)}
+                placeholder="Supports markdown: headings, **bold**, *italic*, `code`, lists, [links](url), tables"
+                className="theme-input"
+                style={{
+                  flex: 1,
+                  minHeight: 200,
+                  resize: "none",
+                  fontFamily: "ui-monospace, monospace",
+                  fontSize: 14,
+                }}
+              />
+            </>
           )}
         </div>
 

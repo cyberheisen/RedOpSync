@@ -39,7 +39,7 @@ import {
   type SeverityLevel,
   type VulnLike,
 } from "../../lib/severity";
-import { Globe, TriangleAlert, Tag, CheckSquare, FileText, HelpCircle, Hash, Network, Wrench, GitCompare, ScanText, Layers, Binary, Key, ListFilter, Sparkles, Braces, Code } from "lucide-react";
+import { Globe, TriangleAlert, Tag, CheckSquare, FileText, HelpCircle, Hash, Network, Wrench, GitCompare, ScanText, Layers, Binary, Key, Link as LinkIcon, ListFilter, Sparkles, Braces, Code, Search } from "lucide-react";
 
 type Subnet = {
   id: string;
@@ -175,6 +175,7 @@ type SelectedNode =
   | { type: "tag-filter"; tagId: string; tagName: string }
   | { type: "scope-notes" }
   | { type: "unresolved" }
+  | { type: "resolved" }
   | { type: "out-of-scope" }
   | { type: "note"; id: string; target: NoteTarget; targetId: string }
   | { type: "vulnerabilities" }
@@ -189,6 +190,7 @@ type SelectedNode =
   | { type: "tools-decoder-base" }
   | { type: "tools-decoder-xor" }
   | { type: "tools-decoder-jwt" }
+  | { type: "tools-decoder-url" }
   | { type: "tools-deduplication" }
   | { type: "tools-prettify-json" }
   | { type: "tools-prettify-javascript" }
@@ -1215,6 +1217,7 @@ export default function MissionDetailPage() {
   const getDescendantKeys = useCallback((key: string): Set<string> => {
     const out = new Set<string>([key]);
     if (key === "scope") {
+      out.add("resolved");
       inScopeSubnets.forEach((s) => out.add(`subnet:${s.id}`));
       out.add("unresolved");
       hosts.filter((h) => h.in_scope !== false).forEach((h) => {
@@ -1238,6 +1241,24 @@ export default function MissionDetailPage() {
         out.add(`host-ports:${h.id}`);
         out.add(`host-vulns:${h.id}`);
         (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+      });
+      return out;
+    }
+    if (key === "resolved") {
+      inScopeSubnets.forEach((s) => out.add(`subnet:${s.id}`));
+      (hostsBySubnet["_unassigned"] ?? []).filter((h) => h.in_scope !== false).forEach((h) => {
+        out.add(`host:${h.id}`);
+        out.add(`host-ports:${h.id}`);
+        out.add(`host-vulns:${h.id}`);
+        (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+      });
+      inScopeSubnets.forEach((s) => {
+        (hostsBySubnet[s.id] ?? []).filter((h) => h.in_scope !== false).forEach((h) => {
+          out.add(`host:${h.id}`);
+          out.add(`host-ports:${h.id}`);
+          out.add(`host-vulns:${h.id}`);
+          (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+        });
       });
       return out;
     }
@@ -1442,7 +1463,7 @@ export default function MissionDetailPage() {
     hostsBySubnet,
   ]);
 
-  const filterNeedsEvidence = parsedFilter && ["page_title", "response_code", "server", "technology", "source", "screenshot"].includes(parsedFilter.attr);
+  const filterNeedsEvidence = parsedFilter && (["page_title", "response_code", "server", "technology", "source", "screenshot"].includes(parsedFilter.attr) || parsedFilter.attr === "_smart");
   useEffect(() => {
     if (!filterActive || !filterNeedsEvidence) return;
     const allPortIds = Object.values(portsByHost).flat().map((p) => p.id);
@@ -1979,10 +2000,18 @@ export default function MissionDetailPage() {
       }
       setHosts((prev) => prev.map((h) => (h.id === hostId ? { ...h, in_scope: inScope } : h)));
       setToast(inScope ? "Moved back into scope" : "Moved out of scope");
+      if (!inScope && missionId) {
+        const sortQ = `&sort_mode=${encodeURIComponent(mission?.sort_mode ?? "cidr_asc")}`;
+        const subnetsRes = await fetch(apiUrl(`/api/subnets?project_id=${missionId}${sortQ}`), { credentials: "include" });
+        if (subnetsRes.ok) {
+          const list = await subnetsRes.json();
+          setSubnets(list);
+        }
+      }
     } catch (err) {
       setToast(err instanceof Error ? err.message : "Failed to update scope");
     }
-  }, [acquireLock, setToast]);
+  }, [acquireLock, setToast, missionId, mission?.sort_mode]);
 
   const handleCreateVuln = async (data: {
     hostIds: string[];
@@ -2178,6 +2207,14 @@ export default function MissionDetailPage() {
       .catch((e) => setToast(e instanceof Error ? e.message : "Failed to update sort"));
   };
 
+  const scopeSortMenuItems = [
+    { label: "CIDR ↑", value: "cidr_asc" },
+    { label: "CIDR ↓", value: "cidr_desc" },
+    { label: "Name ↑", value: "alpha_asc" },
+    { label: "Name ↓", value: "alpha_desc" },
+    { label: "Last seen ↓", value: "last_seen_desc" },
+  ].map(({ label, value }) => ({ label, onClick: () => handleSortModeChange(value) }));
+
   useEffect(() => {
     if (portModal || vulnModal) setLockError("");
   }, [portModal, vulnModal]);
@@ -2273,6 +2310,8 @@ export default function MissionDetailPage() {
               items: [
                 { label: "Expand/Collapse", onClick: () => toggleExpandCollapse(hKey) },
                 { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
+                { label: "Copy IP address", onClick: () => navigator.clipboard.writeText(h.ip ?? "").then(() => setToast("Copied to clipboard")).catch(() => setToast("Failed to copy")) },
+                { label: "Copy Hostname", onClick: () => navigator.clipboard.writeText(h.dns_name ?? "").then(() => setToast("Copied to clipboard")).catch(() => setToast("Failed to copy")) },
                 h.in_scope !== false
                   ? { label: "Move out of scope", onClick: () => handleMoveHostScope(h.id, false) }
                   : { label: "Move back into scope", onClick: () => handleMoveHostScope(h.id, true) },
@@ -2967,6 +3006,8 @@ export default function MissionDetailPage() {
         </div>
       );
     }
+    if (selectedNode.type === "resolved")
+      return <div style={{ padding: 24, color: "var(--text-muted)" }}>Resolved hosts (with IP). Expand to see subnets and hosts.</div>;
     if (selectedNode.type === "unresolved")
       return <div style={{ padding: 24, color: "var(--text-muted)" }}>Hosts with DNS but unresolved IP. Expand to see hosts.</div>;
     if (selectedNode.type === "out-of-scope")
@@ -2997,6 +3038,7 @@ export default function MissionDetailPage() {
     if (selectedNode.type === "tools-decoder-base") return <ToolsDecoderPanel variant="base" />;
     if (selectedNode.type === "tools-decoder-xor") return <ToolsDecoderPanel variant="xor" />;
     if (selectedNode.type === "tools-decoder-jwt") return <ToolsDecoderPanel variant="jwt" />;
+    if (selectedNode.type === "tools-decoder-url") return <ToolsDecoderPanel variant="url" />;
     if (selectedNode.type === "tools-deduplication") return <ToolsDeduplicationPanel />;
     if (selectedNode.type === "tools-prettify-json") return <ToolsPrettifyPanel variant="json" />;
     if (selectedNode.type === "tools-prettify-javascript") return <ToolsPrettifyPanel variant="javascript" />;
@@ -3015,11 +3057,11 @@ export default function MissionDetailPage() {
               const next = new Set(prev);
               if (node.type === "subnet") {
                 const s = subnets.find((x) => x.id === node.id);
-                if (s?.in_scope === false) next.add("out-of-scope"); else next.add("scope");
+                if (s?.in_scope === false) next.add("out-of-scope"); else { next.add("scope"); next.add("resolved"); }
                 next.add(`subnet:${node.id}`);
               } else if (node.type === "host") {
                 const h = hosts.find((x) => x.id === node.id);
-                if (h?.in_scope === false) next.add("out-of-scope"); else next.add("scope");
+                if (h?.in_scope === false) next.add("out-of-scope"); else { next.add("scope"); next.add("resolved"); }
                 if (h?.subnet_id) next.add(`subnet:${h.subnet_id}`);
                 next.add(`host:${node.id}`);
                 next.add(`host-ports:${node.id}`);
@@ -3027,7 +3069,7 @@ export default function MissionDetailPage() {
                 const port = Object.entries(portsByHost).flatMap(([hid, list]) => list.map((p) => ({ hostId: hid, port: p }))).find((x) => x.port.id === node.id);
                 if (port) {
                   const h = hosts.find((x) => x.id === port.hostId);
-                  if (h?.in_scope === false) next.add("out-of-scope"); else next.add("scope");
+                  if (h?.in_scope === false) next.add("out-of-scope"); else { next.add("scope"); next.add("resolved"); }
                   if (h?.subnet_id) next.add(`subnet:${h.subnet_id}`);
                   next.add(`host:${port.hostId}`);
                   next.add(`host-ports:${port.hostId}`);
@@ -3709,24 +3751,8 @@ export default function MissionDetailPage() {
       <div ref={containerRef} style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         <aside style={treeStyle}>
           <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)", marginBottom: 4 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-              <span style={{ color: "var(--text-muted)", fontSize: 12, whiteSpace: "nowrap" }}>Sort:</span>
-              <select
-                className="theme-select"
-                value={mission?.sort_mode ?? "cidr_asc"}
-                onChange={(e) => handleSortModeChange(e.target.value)}
-                style={{ flex: 1, minWidth: 0, fontSize: 12, padding: "4px 8px" }}
-                title="Tree sort order"
-              >
-                <option value="cidr_asc">CIDR ↑</option>
-                <option value="cidr_desc">CIDR ↓</option>
-                <option value="alpha_asc">Name ↑</option>
-                <option value="alpha_desc">Name ↓</option>
-                <option value="last_seen_desc">Last seen ↓</option>
-              </select>
-            </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, backgroundColor: "var(--bg-panel)", borderRadius: 6, border: "1px solid var(--border)", padding: "4px 8px" }}>
-              <span style={{ color: "var(--text-muted)", fontSize: 14 }} title="Filter">{(filterActive || tagFilterActive) ? "🔽" : "▶"}</span>
+              <Search style={{ width: 16, height: 16, opacity: 0.9, flexShrink: 0 }} title="Filter" />
               <input
                 type="text"
                 className="theme-input"
@@ -3854,6 +3880,39 @@ export default function MissionDetailPage() {
                   );
                 });
               })()}
+              {/* Resolved: in-scope subnets + unassigned hosts */}
+              <div>
+                <div
+                  className={"theme-tree-node" + (selectedNode?.type === "resolved" ? " selected" : "")}
+                  style={{ ...nodeStyle(1), color: "var(--text)" }}
+                  onClick={() => {
+                    toggleExpand("resolved");
+                    setSelectedNode({ type: "resolved" });
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setContextMenu({
+                      x: e.clientX,
+                      y: e.clientY,
+                      items: [
+                        { label: "Expand/Collapse", onClick: () => toggleExpandCollapse("resolved") },
+                        { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
+                        ...scopeSortMenuItems,
+                      ],
+                    });
+                  }}
+                >
+                  <span style={{ width: 14 }}>{expanded.has("resolved") ? "▼" : "▶"}</span>
+                  Resolved
+                  <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({inScopeSubnets.length + (hostsBySubnet["_unassigned"] ?? []).filter((h) => h.in_scope !== false).length})</span>
+                </div>
+                {expanded.has("resolved") && (
+                  <>
+                    {inScopeSubnets.filter((s) => !filterActive && !tagFilterActive || effectiveMatchingSubnetIds.has(s.id)).length === 0 && (hostsBySubnet["_unassigned"] ?? []).filter((h) => h.in_scope !== false).length === 0 ? (
+                      <div className="theme-tree-node" style={{ ...nodeStyle(2), color: "var(--text-dim)", fontStyle: "italic" }}>None</div>
+                    ) : (
+                      <>
               {inScopeSubnets.filter((s) => !filterActive && !tagFilterActive || effectiveMatchingSubnetIds.has(s.id)).map((s) => {
                 const key = `subnet:${s.id}`;
                 const isExp = expanded.has(key);
@@ -3866,7 +3925,7 @@ export default function MissionDetailPage() {
                   <div key={s.id}>
                     <div
                       className={"theme-tree-node" + (isSel ? " selected" : "")}
-                      style={{ ...nodeStyle(1), color: subnetSeverity(s.id) ? getSeverityColor(subnetSeverity(s.id)) : "var(--text)" }}
+                      style={{ ...nodeStyle(2), color: subnetSeverity(s.id) ? getSeverityColor(subnetSeverity(s.id)) : "var(--text)" }}
                       onClick={() => { toggleExpand(key); setSelectedNode({ type: "subnet", id: s.id }); }}
                       onContextMenu={(e) => {
                         e.preventDefault();
@@ -3909,7 +3968,7 @@ export default function MissionDetailPage() {
                               <div
                                 key={n.id}
                                 className={"theme-tree-node" + (isNoteSel ? " selected" : "")}
-                                style={{ ...nodeStyle(2), color: "var(--text-muted)" }}
+                                style={{ ...nodeStyle(3), color: "var(--text-muted)" }}
                                 onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "note", id: n.id, target: "subnet", targetId: s.id }); }}
                                 onContextMenu={(ev) => {
                                   ev.preventDefault();
@@ -3936,7 +3995,7 @@ export default function MissionDetailPage() {
                             <div
                               key={t.id}
                               className={"theme-tree-node" + (isSel ? " selected" : "")}
-                              style={{ ...nodeStyle(2), color: "var(--text-muted)", textDecoration: t.status === "done" ? "line-through" : undefined }}
+                              style={{ ...nodeStyle(3), color: "var(--text-muted)", textDecoration: t.status === "done" ? "line-through" : undefined }}
                               onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "todo", id: t.id }); }}
                             >
                               <span style={{ width: 14 }}>•</span>
@@ -3944,12 +4003,21 @@ export default function MissionDetailPage() {
                             </div>
                           );
                         })}
-                        {subnetHosts.map((h) => renderTreeHost(h, 2))}
+                        {subnetHosts.map((h) => renderTreeHost(h, 3))}
                       </>
                     )}
                   </div>
                 );
               })}
+              {/* Unassigned: in-scope hosts with real IP but no subnet */}
+              {(filterActive || tagFilterActive ? [...effectiveMatchingUnassignedHostIds].map((id) => hosts.find((h) => h.id === id)).filter((h): h is Host => !!h && h.in_scope !== false) : (hostsBySubnet["_unassigned"] ?? []).filter((h) => h.in_scope !== false)).map((h) => (
+                <div key={h.id}>{renderTreeHost(h, 2)}</div>
+              ))}
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
               {/* Unresolved: in-scope hosts where DNS exists but IP is unresolved */}
               {(!filterActive && !tagFilterActive ? (hostsBySubnet["_unresolved"] ?? []).filter((h) => h.in_scope !== false).length > 0 : effectiveHasMatchingUnresolved) && (
                 <div>
@@ -3969,12 +4037,14 @@ export default function MissionDetailPage() {
                         items: [
                           { label: "Expand/Collapse", onClick: () => toggleExpandCollapse("unresolved") },
                           { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
+                          ...scopeSortMenuItems,
                         ],
                       });
                     }}
                   >
                     <span style={{ width: 14 }}>{expanded.has("unresolved") ? "▼" : "▶"}</span>
                     Unresolved
+                    <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({(hostsBySubnet["_unresolved"] ?? []).filter((h) => h.in_scope !== false).length})</span>
                   </div>
                   {expanded.has("unresolved") &&
                     (hostsBySubnet["_unresolved"] ?? [])
@@ -3985,10 +4055,6 @@ export default function MissionDetailPage() {
                       ))}
                 </div>
               )}
-              {/* Unassigned: in-scope hosts with real IP but no subnet */}
-              {(filterActive || tagFilterActive ? [...effectiveMatchingUnassignedHostIds].map((id) => hosts.find((h) => h.id === id)).filter((h): h is Host => !!h && h.in_scope !== false) : (hostsBySubnet["_unassigned"] ?? []).filter((h) => h.in_scope !== false)).map((h) => (
-                <div key={h.id}>{renderTreeHost(h, 1)}</div>
-              ))}
               {/* Out of scope: subnets and hosts moved out of scope */}
               <div
                 className={"theme-tree-node" + (selectedNode?.type === "out-of-scope" ? " selected" : "")}
@@ -4004,14 +4070,16 @@ export default function MissionDetailPage() {
                     x: e.clientX,
                     y: e.clientY,
                     items: [
-                    { label: "Expand/Collapse", onClick: () => toggleExpandCollapse("out-of-scope") },
-                    { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
-                  ],
+                      { label: "Expand/Collapse", onClick: () => toggleExpandCollapse("out-of-scope") },
+                      { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
+                      ...scopeSortMenuItems,
+                    ],
                   });
                 }}
               >
                 <span style={{ width: 14 }}>{expanded.has("out-of-scope") ? "▼" : "▶"}</span>
                 Out of scope
+                <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({outOfScopeSubnets.length + standaloneOutOfScopeHosts.length})</span>
               </div>
               {expanded.has("out-of-scope") && (
                 <>
@@ -4367,7 +4435,7 @@ export default function MissionDetailPage() {
             <>
               <div
                 className={"theme-tree-node" + (selectedNode?.type === "report-builder" ? " selected" : "")}
-                style={{ ...nodeStyle(1), paddingLeft: 12 }}
+                style={nodeStyle(1)}
                 onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "report-builder" }); }}
               >
                 <span style={{ width: 14 }}>▶</span>
@@ -4375,14 +4443,14 @@ export default function MissionDetailPage() {
               </div>
               <div
                 className={"theme-tree-node" + (selectedNode?.type === "predefined-reports" ? " selected" : "")}
-                style={{ ...nodeStyle(1), paddingLeft: 12 }}
+                style={nodeStyle(1)}
                 onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "predefined-reports" }); }}
               >
                 <span style={{ width: 14 }}>▶</span>
                 Predefined reports
               </div>
               {savedReports.length === 0 ? (
-                <div className="theme-tree-node" style={{ ...nodeStyle(1), paddingLeft: 12, color: "var(--text-dim)", fontStyle: "italic" }}>No saved reports</div>
+                <div className="theme-tree-node" style={{ ...nodeStyle(1), color: "var(--text-dim)", fontStyle: "italic" }}>No saved reports</div>
               ) : (
               savedReports.map((sr) => {
                 const isSel = selectedNode?.type === "saved-report" && selectedNode.id === sr.id;
@@ -4390,7 +4458,7 @@ export default function MissionDetailPage() {
                   <div
                     key={sr.id}
                     className={"theme-tree-node" + (isSel ? " selected" : "")}
-                    style={{ ...nodeStyle(1), paddingLeft: 12, color: "var(--text-muted)" }}
+                    style={{ ...nodeStyle(1), color: "var(--text-muted)" }}
                     onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "saved-report", id: sr.id }); }}
                   >
                     <span style={{ width: 14 }}>▶</span>
@@ -4476,6 +4544,15 @@ export default function MissionDetailPage() {
                     <span style={{ width: 14 }}>▶</span>
                     <Binary style={navIconStyle} />
                     XOR
+                  </div>
+                  <div
+                    className={"theme-tree-node" + (selectedNode?.type === "tools-decoder-url" ? " selected" : "")}
+                    style={nodeStyle(2)}
+                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "tools-decoder-url" }); }}
+                  >
+                    <span style={{ width: 14 }}>▶</span>
+                    <LinkIcon style={navIconStyle} />
+                    URL
                   </div>
                 </>
               )}
@@ -4568,17 +4645,21 @@ export default function MissionDetailPage() {
               next.add("todos-root");
               next.add("scope");
               if (m.parentType === "subnet" && m.parentId) {
+                next.add("resolved");
                 next.add(`subnet:${m.parentId}`);
               } else if (m.parentType === "host" && m.parentId) {
+                next.add("resolved");
                 const h = hosts.find((x) => x.id === m.parentId);
                 if (h?.subnet_id) next.add(`subnet:${h.subnet_id}`);
                 next.add(`host:${m.parentId}`);
               } else if (m.parentType === "host_ports" && m.parentId) {
+                next.add("resolved");
                 const h = hosts.find((x) => x.id === m.parentId);
                 if (h?.subnet_id) next.add(`subnet:${h.subnet_id}`);
                 next.add(`host:${m.parentId}`);
                 next.add(`host-ports:${m.parentId}`);
               } else if (m.parentType === "port" && m.parentId) {
+                next.add("resolved");
                 const portEntry = Object.entries(portsByHost).flatMap(([hid, list]) => list.map((port) => ({ hostId: hid, port }))).find((x) => x.port.id === m.parentId);
                 if (portEntry) {
                   const h = hosts.find((x) => x.id === portEntry.hostId);

@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -84,17 +85,20 @@ def _find_or_create_host(
     parsed,
     source_dir: str,
 ) -> tuple[Host, bool]:
-    """Find or create host. Returns (host, created)."""
+    """Find or create host. Match by (project_id, ip, dns_name) for resolved so same IP with different hostname creates a new host. Returns (host, created)."""
     ip = parsed.host if parsed.is_ip else UNRESOLVED_IP
     dns = parsed.hostname if parsed.is_ip else parsed.host
+    dns_norm = (dns or "").strip() or None
 
     q = db.query(Host).filter(Host.project_id == project_id)
     if parsed.is_ip:
-        existing = q.filter(Host.ip == ip).first()
-        if not existing and dns:
-            existing = db.query(Host).filter(
-                Host.project_id == project_id, Host.dns_name == dns
-            ).first()
+        q_ip = q.filter(Host.ip == ip)
+        if dns_norm:
+            existing = q_ip.filter(Host.dns_name == dns_norm).first()
+        else:
+            existing = q_ip.filter(or_(Host.dns_name.is_(None), Host.dns_name == "")).first()
+        if existing is None and dns_norm:
+            existing = q.filter(Host.ip == UNRESOLVED_IP, Host.dns_name == dns_norm).first()
     else:
         existing = q.filter(Host.dns_name == dns).first()
         if not existing:
@@ -107,6 +111,13 @@ def _find_or_create_host(
         need_update = False
         if parsed.is_ip and dns and (not existing.dns_name or existing.dns_name != dns):
             existing.dns_name = dns
+            need_update = True
+        if parsed.is_ip and existing.ip == UNRESOLVED_IP:
+            existing.ip = ip
+            new_subnet = find_or_create_subnet_for_ip(db, project_id, ip)
+            if new_subnet:
+                existing.subnet_id = new_subnet
+            existing.status = "unknown"
             need_update = True
         if not parsed.is_ip and existing.ip == UNRESOLVED_IP and parsed.host:
             existing.ip = UNRESOLVED_IP

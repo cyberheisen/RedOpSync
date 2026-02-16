@@ -64,12 +64,13 @@ function base64DecodeUtf8(b64: string): string {
 type BaseVariant = "base32" | "base58" | "base64";
 
 type ToolsDecoderPanelProps = {
-  variant: "base" | "xor" | "jwt";
+  variant: "base" | "xor" | "jwt" | "url";
 };
 
 export function ToolsDecoderPanel({ variant }: ToolsDecoderPanelProps) {
   if (variant === "base") return <BaseDecoder />;
   if (variant === "xor") return <XorDecoder />;
+  if (variant === "url") return <UrlDecoder />;
   return <JwtDecoder />;
 }
 
@@ -124,6 +125,75 @@ function BaseDecoder() {
             value={decodeInput}
             onChange={(e) => setDecodeInput(e.target.value)}
             placeholder="Paste encoded string…"
+            rows={4}
+            style={{ width: "100%", resize: "vertical", fontFamily: "inherit", fontSize: 13 }}
+          />
+          <div style={{ marginTop: 8, fontSize: 13, color: "var(--text-muted)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{decoded() || "—"}</div>
+        </div>
+        <div>
+          <div style={{ marginBottom: 6, fontSize: 13, fontWeight: 500 }}>Encode (text → encoded)</div>
+          <textarea
+            className="theme-input"
+            value={encodeInput}
+            onChange={(e) => setEncodeInput(e.target.value)}
+            placeholder="Type or paste text…"
+            rows={4}
+            style={{ width: "100%", resize: "vertical", fontFamily: "inherit", fontSize: 13 }}
+          />
+          <div style={{ marginTop: 8, fontSize: 13, color: "var(--text-muted)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{encoded() || "—"}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UrlDecoder() {
+  const [encodeMode, setEncodeMode] = useState<"basic" | "all">("basic");
+  const [decodeInput, setDecodeInput] = useState("");
+  const [encodeInput, setEncodeInput] = useState("");
+
+  const decoded = useCallback((): string => {
+    const s = decodeInput.trim();
+    if (!s) return "";
+    try {
+      return decodeURIComponent(s.replace(/\+/g, " "));
+    } catch {
+      return "(decode error)";
+    }
+  }, [decodeInput]);
+
+  const encoded = useCallback((): string => {
+    const s = encodeInput.trim();
+    if (!s) return "";
+    try {
+      if (encodeMode === "basic") return encodeURIComponent(s);
+      const bytes = utf8Encode(s);
+      return Array.from(bytes)
+        .map((b) => "%" + b.toString(16).toUpperCase().padStart(2, "0"))
+        .join("");
+    } catch {
+      return "(encode error)";
+    }
+  }, [encodeInput, encodeMode]);
+
+  return (
+    <div style={{ padding: 24, maxWidth: 900 }}>
+      <h2 style={{ margin: "0 0 16px", fontSize: "1.25rem" }}>URL encoder / decoder</h2>
+      <div style={{ marginBottom: 16 }}>
+        <label style={{ marginRight: 8, fontSize: 14 }}>Encode mode</label>
+        <select className="theme-select" value={encodeMode} onChange={(e) => setEncodeMode(e.target.value as "basic" | "all")} style={{ padding: "6px 10px" }}>
+          <option value="basic">Basic (reserved/special only)</option>
+          <option value="all">Encode all characters</option>
+        </select>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+        <div>
+          <div style={{ marginBottom: 6, fontSize: 13, fontWeight: 500 }}>Decode (encoded → text)</div>
+          <textarea
+            className="theme-input"
+            value={decodeInput}
+            onChange={(e) => setDecodeInput(e.target.value)}
+            placeholder="Paste URL-encoded string…"
             rows={4}
             style={{ width: "100%", resize: "vertical", fontFamily: "inherit", fontSize: 13 }}
           />

@@ -107,6 +107,15 @@ def update_host(
             raise HTTPException(status_code=400, detail="Subnet not found or not in project")
     for k, v in data.items():
         setattr(host, k, v)
+    if data.get("in_scope") is False and host.subnet_id is not None:
+        remaining = db.query(Host).filter(
+            Host.subnet_id == host.subnet_id,
+            Host.in_scope.is_(True),
+        ).count()
+        if remaining == 1:
+            subnet = db.query(Subnet).filter(Subnet.id == host.subnet_id).first()
+            if subnet is not None:
+                subnet.in_scope = False
     db.commit()
     db.refresh(host)
     return host

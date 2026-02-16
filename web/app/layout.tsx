@@ -42,7 +42,13 @@ a[href^="/missions/"]:hover{background:var(--tree-hover)!important;border-color:
 .note-markdown-content ul{margin:.5em 0;padding-left:1.5em}
 .note-markdown-content a{color:var(--accent);text-decoration:none}
 .note-markdown-content a:hover{text-decoration:underline}
+.note-markdown-content table{border-collapse:collapse;width:100%;margin:.5em 0}
+.note-markdown-content th,.note-markdown-content td{border:1px solid var(--border);padding:6px 10px;text-align:left}
+.note-markdown-content th{background:var(--bg-panel)}
 .note-markdown-preview h1,.note-markdown-preview h2,.note-markdown-preview h3{margin:.5em 0}
+.note-markdown-preview table{border-collapse:collapse;width:100%;margin:.5em 0}
+.note-markdown-preview th,.note-markdown-preview td{border:1px solid var(--border);padding:6px 10px;text-align:left}
+.note-markdown-preview th{background:var(--bg-panel)}
 .note-markdown-preview pre,.note-markdown-preview code{background:var(--bg-panel);border-radius:4px;font-size:12px}
 .note-markdown-preview ul{padding-left:1.5em}
 `;

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import UUID
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.models import Host
@@ -95,14 +96,16 @@ def _find_or_create_host(
     th: TextHost,
     source_file: str,
 ) -> tuple[Host, bool]:
-    """Find or create host. Same merge rules as Nmap. Returns (host, created)."""
+    """Find or create host. Match by (project_id, ip, dns_name) so same IP with different hostname creates a new host. Returns (host, created)."""
     ip = th.ip
     dns = th.hostname
+    dns_norm = (dns or "").strip() or None
 
-    q = db.query(Host).filter(Host.project_id == project_id)
-    existing = q.filter(Host.ip == ip).first()
-    if not existing and dns:
-        existing = q.filter(Host.dns_name == dns).first()
+    q = db.query(Host).filter(Host.project_id == project_id, Host.ip == ip)
+    if dns_norm:
+        existing = q.filter(Host.dns_name == dns_norm).first()
+    else:
+        existing = q.filter(or_(Host.dns_name.is_(None), Host.dns_name == "")).first()
 
     if existing:
         need_update = False

@@ -66,7 +66,7 @@ export function parseFilter(input: string): ParsedFilter | null {
     return { attr: attr!.toLowerCase(), op: op as FilterOp, value };
   }
 
-  return null;
+  return { attr: "_smart", op: "contains", value: raw };
 }
 
 export type HostLike = { id: string; ip: string; dns_name: string | null; status: string | null; subnet_id: string | null; whois_data?: Record<string, unknown> | null };
@@ -123,6 +123,11 @@ function evidenceMatches(filter: ParsedFilter, ev: EvidenceLike): boolean {
   const val = filter.value;
   const vNorm = val !== undefined ? normVal(val) : undefined;
 
+  if (attr === "_smart") {
+    const search = (vNorm as string) ?? "";
+    if (!search) return false;
+    return norm(ev.caption ?? "").includes(search) || norm(ev.filename).includes(search) || source.includes(search);
+  }
   if (attr === "page_title") {
     const t = norm(fields["page_title"] || cap);
     if (filter.op === "==") return t === (vNorm as string);
@@ -172,6 +177,11 @@ function portMatches(filter: ParsedFilter, p: PortLike): boolean {
   const val = filter.value;
   const vNorm = val !== undefined ? normVal(val) : undefined;
 
+  if (attr === "_smart") {
+    const search = (vNorm as string) ?? "";
+    if (!search) return false;
+    return String(p.number).includes(search) || norm(p.protocol).includes(search) || norm(p.service_name ?? "").includes(search);
+  }
   if (attr === "port" || attr === "port_number") {
     const num = p.number;
     const numVal = typeof val === "number" ? val : parseInt(String(val), 10);
@@ -215,6 +225,11 @@ function hostMatches(filter: ParsedFilter, h: HostLike): boolean {
   const statusNorm = norm(h.status ?? "");
   const online = statusNorm === "online" || statusNorm === "up";
 
+  if (attr === "_smart") {
+    const search = (vNorm as string) ?? "";
+    if (!search) return false;
+    return norm(h.ip).includes(search) || norm(h.dns_name ?? "").includes(search);
+  }
   if (attr === "hostname" || attr === "dns_name") {
     const s = norm(h.dns_name ?? "");
     if (filter.op === "==") return s === (vNorm as string);
@@ -264,6 +279,13 @@ function hostMatches(filter: ParsedFilter, h: HostLike): boolean {
 
 function vulnMatches(filter: ParsedFilter, v: VulnInstanceLike): boolean {
   const attr = filter.attr;
+  if (attr === "_smart") {
+    const search = (filter.value !== undefined ? normVal(filter.value) : "") as string;
+    if (!search) return false;
+    const title = norm((v as { definition_title?: string }).definition_title ?? "");
+    const sev = norm(getEffectiveSeverity(v) as string);
+    return title.includes(search) || sev.includes(search);
+  }
   if (attr === "vuln.severity" || attr === "severity") {
     const sev = getEffectiveSeverity(v) as SeverityLevel;
     const rank = SEVERITY_RANK[sev] ?? 0;
