@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.admin_deps import require_admin
 from app.core.deps import get_current_user
 from app.db.session import get_db
-from app.models.models import ItemTag, Lock, Project, SavedReport, Tag, User
+from app.models.models import AuditEvent, ItemTag, Lock, Project, SavedReport, Tag, User
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectSortModeUpdate
 from app.schemas.tag import TagCreate, TagRead, ItemTagCreate, ItemTagRead
 from app.schemas.report import (
@@ -76,6 +76,59 @@ def get_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
+
+
+TOOL_RUN_ACTIONS = {
+    "nmap_import_started",
+    "nmap_import_completed",
+    "gowitness_import_started",
+    "gowitness_import_completed",
+    "text_import_started",
+    "text_import_completed",
+}
+
+
+def _action_to_tool(action_type: str) -> str:
+    if "nmap" in action_type:
+        return "nmap"
+    if "gowitness" in action_type:
+        return "gowitness"
+    if "text" in action_type:
+        return "text"
+    return "unknown"
+
+
+@router.get("/{project_id}/tool-runs")
+def list_tool_runs(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List import/tool run events for the project (nmap, gowitness, text)."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    q = (
+        db.query(AuditEvent)
+        .filter(
+            AuditEvent.project_id == project_id,
+            AuditEvent.action_type.in_(TOOL_RUN_ACTIONS),
+        )
+        .order_by(AuditEvent.created_at.desc())
+    )
+    rows = q.all()
+    return {
+        "events": [
+            {
+                "id": str(r.id),
+                "timestamp": r.created_at.isoformat(),
+                "action_type": r.action_type,
+                "tool": _action_to_tool(r.action_type),
+                "details": r.after_json or {},
+            }
+            for r in rows
+        ],
+    }
 
 
 @router.patch("/{project_id}", response_model=ProjectRead)

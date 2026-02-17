@@ -62,6 +62,7 @@ class NmapImportMetadata:
     scan_start: str
     scan_end: str
     source: str = "nmap"
+    task_times: list[int] = field(default_factory=list)  # raw Unix epochs from taskbegin/taskend time=
 
 
 @dataclass
@@ -190,6 +191,23 @@ def _parse_host(host_el: ET.Element) -> NmapHost | None:
     )
 
 
+def _collect_task_times(root: ET.Element) -> list[int]:
+    """Collect time= attributes (Unix epoch) from taskbegin and taskend elements."""
+    times: list[int] = []
+    for el in root.iter():
+        tag = el.tag if hasattr(el, "tag") else ""
+        local = tag.split("}")[-1] if "}" in tag else tag
+        if local not in ("taskbegin", "taskend"):
+            continue
+        t = _attr(el, "time", "")
+        if t:
+            try:
+                times.append(int(t))
+            except ValueError:
+                pass
+    return sorted(times) if times else []
+
+
 def _parse_import_metadata(root: ET.Element) -> NmapImportMetadata:
     """Extract nmap run metadata from root."""
     version = _attr(root, "version", "")
@@ -201,11 +219,13 @@ def _parse_import_metadata(root: ET.Element) -> NmapImportMetadata:
         finished = runstats.find("finished")
         if finished is not None:
             endstr = _attr(finished, "time", "") or _attr(finished, "timestr", "")
+    task_times = _collect_task_times(root)
     return NmapImportMetadata(
         nmap_version=version,
         args=args,
         scan_start=startstr,
         scan_end=endstr,
+        task_times=task_times,
     )
 
 

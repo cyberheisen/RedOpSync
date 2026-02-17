@@ -13,6 +13,9 @@ type Attachment = {
   source: string | null;
   uploaded_by_username: string | null;
   created_at: string;
+  imported_at?: string | null;
+  source_file?: string | null;
+  source_timestamp?: string | null;
 };
 
 type Props = {
@@ -215,6 +218,11 @@ export function PortAttachmentsSection({ portId, canEdit, onRefresh }: Props) {
                       )}
                       <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
                         {a.uploaded_by_username ?? "—"} • {formatDate(a.created_at)}
+                        {(a.source_timestamp ?? a.imported_at) && (
+                          <div style={{ marginTop: 2 }}>
+                            {a.source_timestamp ? `Probed at: ${a.source_timestamp}` : a.imported_at ? `Imported at: ${formatDate(a.imported_at)}` : null}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

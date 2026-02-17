@@ -344,6 +344,10 @@ def run_nmap_import(
         audit_after["args"] = meta.args
         audit_after["scan_start"] = meta.scan_start
         audit_after["scan_end"] = meta.scan_end
+        if meta.task_times:
+            audit_after["task_times"] = meta.task_times
+            audit_after["first_task_time"] = meta.task_times[0]
+            audit_after["last_task_time"] = meta.task_times[-1]
 
     log_audit(
         db,
@@ -414,6 +418,10 @@ def run_nmap_import(
     if meta:
         completed_json["nmap_version"] = meta.nmap_version
         completed_json["args"] = meta.args
+        if meta.task_times:
+            completed_json["task_times"] = meta.task_times
+            completed_json["first_task_time"] = meta.task_times[0]
+            completed_json["last_task_time"] = meta.task_times[-1]
 
     log_audit(
         db,

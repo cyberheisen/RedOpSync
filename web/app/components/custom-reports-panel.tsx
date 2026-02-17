@@ -41,11 +41,12 @@ type CustomReportsPanelProps = {
 function formatRowsToText(rows: Record<string, unknown>[], columnKeys?: string[]): string {
   if (rows.length === 0) return "";
   const keys = (columnKeys && columnKeys.length > 0) ? columnKeys : Object.keys(rows[0]!);
-  const lines = rows.map((r) => {
+  const header = keys.join("\t");
+  const dataLines = rows.map((r) => {
     if (keys.length === 1) return String(r[keys[0]!] ?? "");
     return keys.map((k) => String(r[k] ?? "")).join("\t");
   });
-  return lines.join("\n");
+  return [header, ...dataLines].join("\n");
 }
 
 function formatRowsToCsv(rows: Record<string, unknown>[], columnKeys?: string[]): string {

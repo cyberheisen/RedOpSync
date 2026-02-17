@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.models.models import Evidence, Host, Port, Project
 from app.services.audit import log_audit
 from app.services.subnet import find_or_create_subnet_for_ip
+from app.services.timestamp_normalizer import normalize_timestamp_to_iso8601
 from app.services.gowitness_parser import (
     GOWITNESS_SOURCE,
     GoWitnessRecord,
@@ -186,6 +187,7 @@ def _add_evidence(
     sha256: str | None,
     source_dir: str,
     imported_at: datetime,
+    source_timestamp: str | None = None,
 ) -> bool:
     """Add evidence if not duplicate. Returns True if added."""
     ev = Evidence(
@@ -202,6 +204,7 @@ def _add_evidence(
         source=GOWITNESS_SOURCE,
         imported_at=imported_at,
         source_file=source_dir,
+        source_timestamp=source_timestamp,
     )
     db.add(ev)
     db.commit()
@@ -327,6 +330,7 @@ def run_gowitness_import(
                             file_hash,
                             source_dir,
                             imported_at,
+                            source_timestamp=normalize_timestamp_to_iso8601(rec.probed_at),
                         ):
                             summary.screenshots_imported += 1
                             host.status = "online"
@@ -352,6 +356,7 @@ def run_gowitness_import(
                         None,
                         source_dir,
                         imported_at,
+                        source_timestamp=normalize_timestamp_to_iso8601(rec.probed_at),
                     ):
                         summary.metadata_records_imported += 1
 
@@ -371,6 +376,7 @@ def run_gowitness_import(
                         None,
                         source_dir,
                         imported_at,
+                        source_timestamp=normalize_timestamp_to_iso8601(rec.probed_at),
                     ):
                         summary.metadata_records_imported += 1
 
@@ -391,6 +397,7 @@ def run_gowitness_import(
                         None,
                         source_dir,
                         imported_at,
+                        source_timestamp=normalize_timestamp_to_iso8601(rec.probed_at),
                     ):
                         summary.metadata_records_imported += 1
 
@@ -410,6 +417,7 @@ def run_gowitness_import(
                         None,
                         source_dir,
                         imported_at,
+                        source_timestamp=normalize_timestamp_to_iso8601(rec.probed_at),
                     ):
                         summary.metadata_records_imported += 1
 
@@ -430,6 +438,7 @@ def run_gowitness_import(
                         None,
                         source_dir,
                         imported_at,
+                        source_timestamp=normalize_timestamp_to_iso8601(rec.probed_at),
                     ):
                         summary.metadata_records_imported += 1
 

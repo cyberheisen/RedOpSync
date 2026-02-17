@@ -43,6 +43,7 @@ class GoWitnessRecord:
     technologies: list[str] | None = None  # e.g. ["HTTP/3", "Google Web Server"]
     parsed: ParsedURL | None = None
     metadata_path: Path | None = None
+    probed_at: str | None = None  # ISO 8601 from JSONL "probed_at"
 
 
 @dataclass
@@ -250,6 +251,8 @@ def _record_from_metadata(meta: dict, screenshot_path: Path | None, json_path: P
     if isinstance(redirects, str):
         redirects = [redirects] if redirects else None
     technologies = _extract_technologies(meta)
+    probed_at = meta.get("probed_at") or meta.get("ProbedAt")
+    probed_at = str(probed_at).strip() if probed_at else None
 
     return GoWitnessRecord(
         screenshot_path=screenshot_path,
@@ -262,6 +265,7 @@ def _record_from_metadata(meta: dict, screenshot_path: Path | None, json_path: P
         technologies=technologies,
         parsed=parsed,
         metadata_path=json_path,
+        probed_at=probed_at or None,
     )
 
 

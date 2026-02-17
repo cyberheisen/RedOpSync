@@ -217,6 +217,7 @@ class Evidence(Base):
     source = Column(String(64), nullable=True)
     imported_at = Column(DateTime(timezone=True), nullable=True)
     source_file = Column(String(512), nullable=True)
+    source_timestamp = Column(String(128), nullable=True)  # raw timestamp from tool (e.g. gowitness probed_at)
     notes_md = Column(Text, nullable=True)  # user-added notes for this evidence
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)

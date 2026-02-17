@@ -259,11 +259,17 @@ def _run_evidence_entries(db: Session, project_id: UUID, parsed_filters: list[Pa
             )
         if not keep:
             continue
+        # Timestamps: when evidence was gathered (prefer tool timestamp, then import, then created)
+        created_at_iso = ev.created_at.isoformat() if ev.created_at else None
+        imported_at_iso = ev.imported_at.isoformat() if ev.imported_at else None
         out.append({
+            "host_ip": h.ip if h else None,
             "source": ev.source or "manual",
             "caption": ev.caption or ev.filename,
-            "host_ip": h.ip if h else None,
             "filename": ev.filename,
+            "created_at": created_at_iso,
+            "imported_at": imported_at_iso,
+            "source_timestamp": ev.source_timestamp,
         })
     return out
 
@@ -294,6 +300,9 @@ BUILDER_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("source", "Source"),
         ("caption", "Caption"),
         ("filename", "Filename"),
+        ("created_at", "Created at"),
+        ("imported_at", "Imported at"),
+        ("source_timestamp", "Source timestamp"),
     ],
     "vulns": [
         ("title", "Title"),
@@ -403,6 +412,12 @@ def _run_builder(
                 row["caption"] = ev.caption or ev.filename
             if "filename" in cols:
                 row["filename"] = ev.filename
+            if "created_at" in cols:
+                row["created_at"] = ev.created_at.isoformat() if ev.created_at else None
+            if "imported_at" in cols:
+                row["imported_at"] = ev.imported_at.isoformat() if ev.imported_at else None
+            if "source_timestamp" in cols:
+                row["source_timestamp"] = ev.source_timestamp
             rows.append(row)
         return rows
 

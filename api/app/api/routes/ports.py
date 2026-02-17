@@ -106,6 +106,9 @@ def get_port(
             notes_md=a.notes_md,
             uploaded_by_username=a.uploaded_by.username if a.uploaded_by else None,
             created_at=a.created_at,
+            imported_at=a.imported_at,
+            source_file=a.source_file,
+            source_timestamp=a.source_timestamp,
         )
         for a in atts
     ]
@@ -184,6 +187,9 @@ def list_port_attachments(
             notes_md=a.notes_md,
             uploaded_by_username=a.uploaded_by.username if a.uploaded_by else None,
             created_at=a.created_at,
+            imported_at=a.imported_at,
+            source_file=a.source_file,
+            source_timestamp=a.source_timestamp,
         )
         for a in atts
     ]
@@ -243,6 +249,9 @@ def upload_port_attachment(
         is_pasted=False,
         uploaded_by_username=current_user.username,
         created_at=ev.created_at,
+        imported_at=ev.imported_at,
+        source_file=ev.source_file,
+        source_timestamp=ev.source_timestamp,
     )
 
 
@@ -299,6 +308,9 @@ def paste_port_screenshot(
         is_pasted=True,
         uploaded_by_username=current_user.username,
         created_at=ev.created_at,
+        imported_at=ev.imported_at,
+        source_file=ev.source_file,
+        source_timestamp=ev.source_timestamp,
     )
 
 
@@ -355,6 +367,9 @@ def update_port_attachment_notes(
         notes_md=ev.notes_md,
         uploaded_by_username=ev.uploaded_by.username if ev.uploaded_by else None,
         created_at=ev.created_at,
+        imported_at=ev.imported_at,
+        source_file=ev.source_file,
+        source_timestamp=ev.source_timestamp,
     )
 
 

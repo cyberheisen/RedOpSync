@@ -39,7 +39,7 @@ import {
   type SeverityLevel,
   type VulnLike,
 } from "../../lib/severity";
-import { Globe, TriangleAlert, Tag, CheckSquare, FileText, HelpCircle, Hash, Network, Wrench, GitCompare, ScanText, Layers, Binary, Key, Link as LinkIcon, ListFilter, Sparkles, Braces, Code, Search } from "lucide-react";
+import { Globe, TriangleAlert, Tag, CheckSquare, FileText, HelpCircle, Hash, Network, Wrench, GitCompare, ScanText, Layers, Binary, Key, Link as LinkIcon, ListFilter, Sparkles, Braces, Code, Search, Clock } from "lucide-react";
 
 type Subnet = {
   id: string;
@@ -125,6 +125,9 @@ type PortEvidence = {
   notes_md: string | null;
   uploaded_by_username: string | null;
   created_at: string;
+  imported_at?: string | null;
+  source_file?: string | null;
+  source_timestamp?: string | null;
 };
 
 type NoteTarget = "scope" | "subnet" | "host" | "host_ports" | "port" | "evidence" | "vulnerabilities" | "vulnerability_definition";
@@ -194,6 +197,7 @@ type SelectedNode =
   | { type: "tools-deduplication" }
   | { type: "tools-prettify-json" }
   | { type: "tools-prettify-javascript" }
+  | { type: "tool-runs" }
   | null;
 
 const ICON = { notes: "≡" } as const;
@@ -713,6 +717,8 @@ export default function MissionDetailPage() {
   const [stubModal, setStubModal] = useState<{ title: string; message?: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [savedReports, setSavedReports] = useState<{ id: string; project_id: string; name: string; description: string | null; query_definition: { data_source: string; columns: string[]; filter_expression: string }; created_at: string }[]>([]);
+  const [toolRunsEvents, setToolRunsEvents] = useState<{ id: string; timestamp: string; action_type: string; tool: string; details: Record<string, unknown> }[]>([]);
+  const [toolRunsLoading, setToolRunsLoading] = useState(false);
   type TodoParentType = "scope" | "subnet" | "host" | "host_ports" | "port" | "vulnerabilities" | "vulnerability_definition";
   const [addTodoModal, setAddTodoModal] = useState<{ parentType: TodoParentType; parentId?: string | null; contextLabel?: string } | null>(null);
   const [todosVersion, setTodosVersion] = useState(0);
@@ -1478,6 +1484,17 @@ export default function MissionDetailPage() {
       loadNotesForPort(selectedPortId);
     }
   }, [selectedPortId, loadEvidenceForPort, loadNotesForPort]);
+
+  useEffect(() => {
+    if (selectedNode?.type !== "tool-runs" || !missionId) return;
+    setToolRunsLoading(true);
+    fetch(apiUrl(`/api/projects/${missionId}/tool-runs`), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : { events: [] }))
+      .then((data: { events: { id: string; timestamp: string; action_type: string; tool: string; details: Record<string, unknown> }[] }) => {
+        setToolRunsEvents(data.events ?? []);
+      })
+      .finally(() => setToolRunsLoading(false));
+  }, [selectedNode?.type, missionId]);
 
   const allVulns = Object.values(vulnsByHost).flat();
   const scopeSeverity = getHighestSeverity(
@@ -2859,6 +2876,66 @@ export default function MissionDetailPage() {
         </div>
       );
     }
+    if (selectedNode.type === "tool-runs") {
+      const formatToolRunDetails = (details: Record<string, unknown>, actionType: string): string => {
+        const parts: string[] = [];
+        if (details.source_file) parts.push(`File: ${String(details.source_file)}`);
+        if (details.source_dir) parts.push(`Dir: ${String(details.source_dir)}`);
+        if (details.scan_start) parts.push(`Scan start: ${String(details.scan_start)}`);
+        if (details.scan_end) parts.push(`Scan end: ${String(details.scan_end)}`);
+        if (details.first_task_time != null) parts.push(`First task: ${String(details.first_task_time)}`);
+        if (details.last_task_time != null) parts.push(`Last task: ${String(details.last_task_time)}`);
+        if (details.hosts_created != null) parts.push(`Hosts created: ${String(details.hosts_created)}`);
+        if (details.hosts_updated != null) parts.push(`Hosts updated: ${String(details.hosts_updated)}`);
+        if (details.ports_created != null) parts.push(`Ports created: ${String(details.ports_created)}`);
+        if (details.ports_updated != null) parts.push(`Ports updated: ${String(details.ports_updated)}`);
+        if (details.screenshots_imported != null) parts.push(`Screenshots: ${String(details.screenshots_imported)}`);
+        if (details.metadata_records_imported != null) parts.push(`Metadata: ${String(details.metadata_records_imported)}`);
+        return parts.length ? parts.join(" · ") : actionType;
+      };
+      const formatTs = (ts: string) => {
+        try {
+          const d = new Date(ts);
+          return `${ts} (${d.toLocaleString()})`;
+        } catch {
+          return ts;
+        }
+      };
+      return (
+        <div style={{ padding: 24 }}>
+          <h2 style={{ margin: "0 0 16px", fontSize: "1.25rem" }}>Tool runs</h2>
+          <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>When imports (Nmap, GoWitness, Text) were run for this mission.</p>
+          {toolRunsLoading ? (
+            <p style={{ color: "var(--text-muted)" }}>Loading…</p>
+          ) : toolRunsEvents.length === 0 ? (
+            <p style={{ color: "var(--text-muted)" }}>No tool runs recorded yet.</p>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--border)", textAlign: "left" }}>
+                    <th style={{ padding: "8px 12px" }}>Time</th>
+                    <th style={{ padding: "8px 12px" }}>Tool</th>
+                    <th style={{ padding: "8px 12px" }}>Phase</th>
+                    <th style={{ padding: "8px 12px" }}>Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {toolRunsEvents.map((ev) => (
+                    <tr key={ev.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+                      <td style={{ padding: "8px 12px", whiteSpace: "nowrap", fontSize: 12 }} title={ev.timestamp}>{formatTs(ev.timestamp)}</td>
+                      <td style={{ padding: "8px 12px" }}>{ev.tool === "nmap" ? "Nmap" : ev.tool === "gowitness" ? "GoWitness" : ev.tool === "text" ? "Text" : ev.tool}</td>
+                      <td style={{ padding: "8px 12px", fontSize: 12, color: "var(--text-muted)" }}>{ev.action_type.includes("started") ? "Started" : "Completed"}</td>
+                      <td style={{ padding: "8px 12px", fontSize: 13, color: "var(--text-muted)" }}>{formatToolRunDetails(ev.details, ev.action_type)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      );
+    }
     if (selectedNode.type === "tag") {
       return (
         <div style={{ padding: 24 }}>
@@ -3649,6 +3726,11 @@ export default function MissionDetailPage() {
                     return (
                       <div key={ev.id} style={{ padding: "8px 12px", backgroundColor: "var(--bg-panel)", borderRadius: 8, border: "1px solid var(--border)" }}>
                         <span style={{ fontSize: 14, fontWeight: 500 }}>{ev.caption || ev.filename}</span>
+                        {(ev.source_timestamp ?? ev.imported_at ?? ev.created_at) && (
+                          <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+                            {ev.source_timestamp ? `Probed at: ${ev.source_timestamp}` : ev.imported_at ? `Imported at: ${formatDate(ev.imported_at)}` : `Created: ${formatDate(ev.created_at)}`}
+                          </div>
+                        )}
                         {evNotes.length > 0 && (
                           <div style={{ marginTop: 8 }}>
                             {evNotes.map((n) => (
@@ -3690,9 +3772,14 @@ export default function MissionDetailPage() {
                             style={{ maxWidth: "100%", borderRadius: 8, border: "1px solid var(--border)", display: "block" }}
                           />
                         </a>
-                        {ev.caption && (
-                          <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--text-muted)" }}>{ev.caption}</p>
-                        )}
+                        <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--text-muted)" }}>
+                          {ev.caption}
+                          {(ev.source_timestamp ?? ev.imported_at) && (
+                            <span style={{ display: "block", marginTop: ev.caption ? 4 : 0 }}>
+                              {ev.source_timestamp ? `Probed at: ${ev.source_timestamp}` : ev.imported_at ? `Imported at: ${formatDate(ev.imported_at)}` : null}
+                            </span>
+                          )}
+                        </p>
                         {evNotes.length > 0 && (
                           <div style={{ marginTop: 8 }}>
                             {evNotes.map((n) => (
@@ -4598,6 +4685,15 @@ export default function MissionDetailPage() {
                 <span style={{ width: 14 }}>▶</span>
                 <ListFilter style={navIconStyle} />
                 Deduplication
+              </div>
+              <div
+                className={"theme-tree-node" + (selectedNode?.type === "tool-runs" ? " selected" : "")}
+                style={nodeStyle(1)}
+                onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "tool-runs" }); }}
+              >
+                <span style={{ width: 14 }}>▶</span>
+                <Clock style={navIconStyle} />
+                Tool runs
               </div>
             </>
           )}
