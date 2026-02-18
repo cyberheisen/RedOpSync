@@ -32,12 +32,17 @@ class NmapPort:
     port_id: int
     protocol: str  # tcp | udp
     state: str  # open | filtered | closed | open|filtered | closed|filtered
-    service_name: str | None
-    product: str | None
-    version: str | None
-    extrainfo: str | None
-    ostype: str | None
-    tunnel: str | None  # e.g. ssl
+    state_reason: str | None = None
+    state_reason_ttl: int | None = None
+    service_name: str | None = None
+    product: str | None = None
+    version: str | None = None
+    extrainfo: str | None = None
+    ostype: str | None = None
+    tunnel: str | None = None  # e.g. ssl
+    service_method: str | None = None  # e.g. table, probed
+    service_conf: int | None = None  # confidence 0-10
+    devicetype: str | None = None  # e.g. VoIP adapter
     scripts: list[NmapScript] = field(default_factory=list)
 
 
@@ -49,6 +54,8 @@ class NmapHost:
     hostname: str | None
     hostnames: list[str]  # all hostname entries
     status: str  # up | down | unknown
+    starttime: str | None = None  # Unix epoch from host element
+    endtime: str | None = None  # Unix epoch from host element
     ports: list[NmapPort] = field(default_factory=list)
     is_unresolved: bool = False  # hostname exists but IP not resolved
 
@@ -97,12 +104,24 @@ def _parse_port(port_el: ET.Element) -> NmapPort | None:
 
     state_el = port_el.find("state")
     state = _attr(state_el, "state", "unknown") if state_el is not None else "unknown"
+    state_reason: str | None = _attr(state_el, "reason") or None if state_el is not None else None
+    state_reason_ttl: int | None = None
+    if state_el is not None:
+        ttl_str = _attr(state_el, "reason_ttl", "")
+        if ttl_str:
+            try:
+                state_reason_ttl = int(ttl_str)
+            except ValueError:
+                pass
 
     service_name: str | None = None
     product: str | None = None
     version: str | None = None
     extrainfo: str | None = None
     ostype: str | None = None
+    service_method: str | None = None
+    service_conf: int | None = None
+    devicetype: str | None = None
 
     tunnel: str | None = None
     service_el = port_el.find("service")
@@ -115,6 +134,14 @@ def _parse_port(port_el: ET.Element) -> NmapPort | None:
         tn = _attr(service_el, "tunnel", "").strip().lower()
         if tn:
             tunnel = tn
+        service_method = _attr(service_el, "method") or None
+        devicetype = _attr(service_el, "devicetype") or None
+        conf_str = _attr(service_el, "conf", "")
+        if conf_str:
+            try:
+                service_conf = int(conf_str)
+            except ValueError:
+                pass
 
     scripts: list[NmapScript] = []
     for script_el in port_el.findall("script"):
@@ -127,12 +154,17 @@ def _parse_port(port_el: ET.Element) -> NmapPort | None:
         port_id=port_id,
         protocol=protocol,
         state=state,
+        state_reason=state_reason,
+        state_reason_ttl=state_reason_ttl,
         service_name=service_name,
         product=product,
         version=version,
         extrainfo=extrainfo,
         ostype=ostype,
         tunnel=tunnel,
+        service_method=service_method,
+        service_conf=service_conf,
+        devicetype=devicetype,
         scripts=scripts,
     )
 
@@ -173,6 +205,9 @@ def _parse_host(host_el: ET.Element) -> NmapHost | None:
     if not ip:
         return None
 
+    starttime = _attr(host_el, "starttime") or None
+    endtime = _attr(host_el, "endtime") or None
+
     ports: list[NmapPort] = []
     ports_el = host_el.find("ports")
     if ports_el is not None:
@@ -186,6 +221,8 @@ def _parse_host(host_el: ET.Element) -> NmapHost | None:
         hostname=hostname_primary,
         hostnames=hostnames,
         status=status,
+        starttime=starttime,
+        endtime=endtime,
         ports=ports,
         is_unresolved=is_unresolved,
     )

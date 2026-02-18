@@ -102,6 +102,7 @@ class Port(Base):
     evidence_md = Column(Text, nullable=True)
     discovered_by = Column(String(64), nullable=True)
     scanned_at = Column(DateTime(timezone=True), nullable=True)
+    scan_metadata = Column(JSONB, nullable=True)  # e.g. state_reason, service_conf, devicetype, nmap_args, scan_start, scan_end
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 

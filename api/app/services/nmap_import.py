@@ -23,7 +23,13 @@ from sqlalchemy.orm import Session
 
 from app.models.models import Evidence, Host, Port, Project
 from app.services.audit import log_audit
-from app.services.nmap_parser import NMAP_SOURCE, UNRESOLVED_IP, NmapHost, NmapParseResult
+from app.services.nmap_parser import (
+    NMAP_SOURCE,
+    UNRESOLVED_IP,
+    NmapHost,
+    NmapImportMetadata,
+    NmapParseResult,
+)
 from app.services.subnet import find_or_create_subnet_for_ip
 
 
@@ -131,6 +137,48 @@ def _build_service_banner(nh_port) -> str:
     return " ".join(parts).strip() if parts else ""
 
 
+def _build_scan_metadata(
+    nh_port,
+    import_metadata: NmapImportMetadata | None,
+    host_starttime: str | None,
+    host_endtime: str | None,
+) -> dict:
+    """Build scan_metadata dict for Port from Nmap port + run metadata."""
+    meta: dict = {}
+    if getattr(nh_port, "state_reason", None):
+        meta["state_reason"] = nh_port.state_reason
+    if getattr(nh_port, "state_reason_ttl", None) is not None:
+        meta["state_reason_ttl"] = nh_port.state_reason_ttl
+    if getattr(nh_port, "service_conf", None) is not None:
+        meta["service_conf"] = nh_port.service_conf
+    if getattr(nh_port, "service_method", None):
+        meta["service_method"] = nh_port.service_method
+    if getattr(nh_port, "devicetype", None):
+        meta["devicetype"] = nh_port.devicetype
+    if import_metadata and import_metadata.args:
+        meta["nmap_args"] = import_metadata.args
+    if host_starttime:
+        meta["scan_start"] = host_starttime
+    elif import_metadata and import_metadata.scan_start:
+        meta["scan_start"] = import_metadata.scan_start
+    if host_endtime:
+        meta["scan_end"] = host_endtime
+    elif import_metadata and import_metadata.scan_end:
+        meta["scan_end"] = import_metadata.scan_end
+    return meta
+
+
+def _parse_epoch_to_utc(epoch_str: str | None) -> datetime | None:
+    """Convert Unix epoch string to timezone-aware datetime. Returns None if invalid."""
+    if not epoch_str:
+        return None
+    try:
+        ts = int(epoch_str)
+        return datetime.fromtimestamp(ts, tz=timezone.utc)
+    except (ValueError, OSError):
+        return None
+
+
 def _evidence_caption_exists(db: Session, port_id: UUID, caption_prefix: str) -> bool:
     """Check if evidence with this caption prefix from nmap already exists."""
     q = db.query(Evidence).filter(
@@ -180,11 +228,17 @@ def _find_or_create_port(
     source_file: str,
     imported_at: datetime,
     summary: NmapImportSummary,
+    import_metadata: NmapImportMetadata | None = None,
+    host_starttime: str | None = None,
+    host_endtime: str | None = None,
 ) -> tuple[Port, bool]:
     """Find or create port. Merge service/version only if empty. Returns (port, created)."""
     proto = (nh_port.protocol or "tcp").lower()
     if proto not in ("tcp", "udp"):
         proto = "tcp"
+
+    scan_metadata = _build_scan_metadata(nh_port, import_metadata, host_starttime, host_endtime)
+    scanned_at = _parse_epoch_to_utc(host_starttime)
 
     existing = (
         db.query(Port)
@@ -211,6 +265,12 @@ def _find_or_create_port(
         if not existing.discovered_by:
             existing.discovered_by = NMAP_SOURCE
             need_commit = True
+        if is_same_source and scan_metadata:
+            existing.scan_metadata = scan_metadata
+            need_commit = True
+        if is_same_source and scanned_at is not None:
+            existing.scanned_at = scanned_at
+            need_commit = True
         if need_commit:
             db.commit()
             db.refresh(existing)
@@ -227,6 +287,8 @@ def _find_or_create_port(
         service_version=nh_port.version[:255] if nh_port.version else None,
         banner=banner[:2000] if banner else None,
         discovered_by=NMAP_SOURCE,
+        scan_metadata=scan_metadata if scan_metadata else None,
+        scanned_at=scanned_at,
     )
     db.add(port)
     db.commit()
@@ -379,10 +441,19 @@ def run_nmap_import(
             else:
                 summary.hosts_updated += 1
 
+            meta = parse_result.import_metadata
             for nh_port in nh.ports:
                 try:
                     port, port_created = _find_or_create_port(
-                        db, host, nh_port, source_file, imported_at, summary
+                        db,
+                        host,
+                        nh_port,
+                        source_file,
+                        imported_at,
+                        summary,
+                        import_metadata=meta,
+                        host_starttime=getattr(nh, "starttime", None),
+                        host_endtime=getattr(nh, "endtime", None),
                     )
                     if port_created:
                         summary.ports_created += 1

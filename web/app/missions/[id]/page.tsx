@@ -39,7 +39,7 @@ import {
   type SeverityLevel,
   type VulnLike,
 } from "../../lib/severity";
-import { Globe, TriangleAlert, Tag, CheckSquare, FileText, HelpCircle, Hash, Network, Wrench, GitCompare, ScanText, Layers, Binary, Key, Link as LinkIcon, ListFilter, Sparkles, Braces, Code, Search, Clock } from "lucide-react";
+import { Globe, TriangleAlert, Tag, CheckSquare, FileText, HelpCircle, Hash, Network, Wrench, GitCompare, ScanText, Layers, Binary, Key, Link as LinkIcon, ListFilter, Sparkles, Braces, Code, Search, Clock, Box } from "lucide-react";
 
 type Subnet = {
   id: string;
@@ -72,6 +72,7 @@ type Port = {
   evidence_md?: string | null;
   discovered_by?: string | null;
   scanned_at?: string | null;
+  scan_metadata?: Record<string, unknown> | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -171,6 +172,7 @@ type SelectedNode =
   | { type: "host-whois"; hostId: string }
   | { type: "host-whois-field"; hostId: string; field: "network" | "asn" | "country" | "cidr" | "type" | "registry" }
   | { type: "port"; id: string }
+  | { type: "port-device"; portId: string }
   | { type: "port-evidence"; id: string; portId: string; hostId: string }
   | { type: "host-vulnerabilities"; hostId: string }
   | { type: "vuln-instance"; id: string }
@@ -1964,6 +1966,7 @@ export default function MissionDetailPage() {
       if (selectedNode?.type === "subnet" && selectedNode.id === subnetId) setSelectedNode(null);
       if (selectedNode && (selectedNode.type === "host" || selectedNode.type === "host-ports" || selectedNode.type === "host-whois" || selectedNode.type === "host-whois-field" || selectedNode.type === "host-vulnerabilities") && hostIdsToRemove.has(selectedNode.type === "host" ? selectedNode.id : selectedNode.hostId)) setSelectedNode(null);
       if (selectedNode?.type === "port" && portIdsToRemove.has(selectedNode.id)) setSelectedNode(null);
+      if (selectedNode?.type === "port-device" && portIdsToRemove.has(selectedNode.portId)) setSelectedNode(null);
       if (selectedNode?.type === "port-evidence" && portIdsToRemove.has(selectedNode.portId)) setSelectedNode(null);
       if (selectedNode?.type === "note" && (selectedNode.targetId === subnetId || (selectedNode.target === "host" && hostIdsToRemove.has(selectedNode.targetId)))) setSelectedNode(null);
       setToast("Subnet and all hosts, ports, evidence, and notes deleted");
@@ -2298,14 +2301,26 @@ export default function MissionDetailPage() {
     const portCount = portsLoaded.has(h.id) ? ports.length : null;
     const vulnCount = vulnsLoaded.has(h.id) ? vulns.length : null;
     const hasVulns = vulnCount !== null && vulnCount > 0;
+    const portCountStr =
+      portCount !== null && filterActive && allPorts.length !== ports.length
+        ? `${ports.length} of ${allPorts.length}`
+        : portCount !== null
+          ? String(portCount)
+          : null;
+    const vulnCountStr =
+      vulnCount !== null && filterActive && allVulns.length !== vulns.length
+        ? `${vulns.length} of ${allVulns.length}`
+        : vulnCount !== null
+          ? String(vulnCount)
+          : null;
     const countStr = isUnresolvedHost(h)
       ? ""
-      : portCount !== null && hasVulns
-        ? ` (${portCount} ports • ${vulnCount} vulns)`
-        : portCount !== null
-          ? ` (${portCount} ports)`
-          : hasVulns
-            ? ` (${vulnCount} vulns)`
+      : portCountStr !== null && vulnCountStr !== null && hasVulns
+        ? ` (${portCountStr} ports • ${vulnCountStr} vulns)`
+        : portCountStr !== null
+          ? ` (${portCountStr} ports)`
+          : vulnCountStr !== null && hasVulns
+            ? ` (${vulnCountStr} vulns)`
             : "";
 
     return (
@@ -2493,7 +2508,11 @@ export default function MissionDetailPage() {
               <Network style={navIconStyle} />
               <span>Ports</span>
               {portsLoad && <Spinner />}
-              {portsLoaded.has(h.id) && !portsLoad && <span style={{ color: "var(--text-muted)", fontSize: 11 }}>({ports.length})</span>}
+              {portsLoaded.has(h.id) && !portsLoad && (
+                <span style={{ color: "var(--text-muted)", fontSize: 11 }}>
+                  ({filterActive && allPorts.length !== ports.length ? `${ports.length} of ${allPorts.length}` : ports.length})
+                </span>
+              )}
             </div>
             {portsExp && (
               <>
@@ -2585,6 +2604,16 @@ export default function MissionDetailPage() {
                         </div>
                         {portEvExp && (
                           <>
+                            {p.scan_metadata && Object.keys(p.scan_metadata).length > 0 && (
+                              <div
+                                className={"theme-tree-node" + (selectedNode?.type === "port-device" && selectedNode.portId === p.id ? " selected" : "")}
+                                style={nodeStyle(baseDepth + 3)}
+                                onClick={(evt) => { evt.stopPropagation(); setSelectedNode({ type: "port-device", portId: p.id }); }}
+                              >
+                                <span style={{ width: 14 }}><Box size={14} style={{ display: "inline-block", verticalAlign: "middle" }} /></span>
+                                <span>Device</span>
+                              </div>
+                            )}
                             {projectNotes.filter((n) => n.target_type === "port" && n.target_id === p.id).map((n) => {
                                 const isNoteSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "port";
                                 const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
@@ -3262,8 +3291,10 @@ export default function MissionDetailPage() {
     if (selectedNode.type === "host") {
       const host = hosts.find((h) => h.id === selectedNode.id);
       if (!host) return null;
-      const ports = portsByHost[host.id] ?? [];
-      const vulns = vulnsByHost[host.id] ?? [];
+      const allPorts = portsByHost[host.id] ?? [];
+      const ports = filterActive ? allPorts.filter((p) => matchingPortIds.has(p.id)) : allPorts;
+      const allVulns = vulnsByHost[host.id] ?? [];
+      const vulns = filterActive ? allVulns.filter((v) => matchingVulnIds.has(v.id)) : allVulns;
       const hostNotes = projectNotes.filter((n) => n.target_type === "host" && n.target_id === host.id);
       const hostTodos = projectTodos.filter((t) => t.target_type === "host" && t.target_id === host.id);
       const hostTags = getItemTagsFor("host", host.id);
@@ -3402,7 +3433,8 @@ export default function MissionDetailPage() {
     if (selectedNode.type === "host-ports") {
       const host = hosts.find((h) => h.id === selectedNode.hostId);
       if (!host) return null;
-      const ports = portsByHost[host.id] ?? [];
+      const allPorts = portsByHost[host.id] ?? [];
+      const ports = filterActive ? allPorts.filter((p) => matchingPortIds.has(p.id)) : allPorts;
       return (
         <div style={{ padding: 24 }}>
           <div style={{ marginBottom: 8 }}>
@@ -3647,6 +3679,50 @@ export default function MissionDetailPage() {
       );
     }
 
+    if (selectedNode.type === "port-device") {
+      let port: Port | null = null;
+      let host: Host | null = null;
+      for (const h of hosts) {
+        const found = (portsByHost[h.id] ?? []).find((p) => p.id === selectedNode.portId);
+        if (found) {
+          port = found;
+          host = h;
+          break;
+        }
+      }
+      if (!port || !host || !port.scan_metadata) return null;
+      const meta = port.scan_metadata;
+      return (
+        <div style={{ padding: 24 }}>
+          <h2 style={{ margin: "0 0 8px", fontSize: "1.25rem" }}>Device</h2>
+          <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>{port.number}/{port.protocol} on {hostLabel(host)}</p>
+          {"devicetype" in meta && meta.devicetype != null && (
+            <div style={{ marginBottom: 16 }}>
+              <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Device type</h3>
+              <p style={{ fontSize: 15 }}>{String(meta.devicetype)}</p>
+            </div>
+          )}
+          <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Scan metadata</h3>
+          <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
+            {"state_reason" in meta && meta.state_reason != null && (
+              <div style={{ marginBottom: 4 }}>State reason: {String(meta.state_reason)}{"state_reason_ttl" in meta && meta.state_reason_ttl != null ? ` (TTL ${meta.state_reason_ttl})` : ""}</div>
+            )}
+            {"service_conf" in meta && meta.service_conf != null && (
+              <div style={{ marginBottom: 4 }}>Confidence: {String(meta.service_conf)}</div>
+            )}
+            {"nmap_args" in meta && meta.nmap_args != null && (
+              <div style={{ marginBottom: 4 }}>Command: <code style={{ fontSize: 11, wordBreak: "break-all" }}>{String(meta.nmap_args)}</code></div>
+            )}
+            {("scan_start" in meta && meta.scan_start != null) || ("scan_end" in meta && meta.scan_end != null) ? (
+              <div style={{ marginBottom: 4 }}>
+                Run times: {meta.scan_start != null ? String(meta.scan_start) : "—"} to {meta.scan_end != null ? String(meta.scan_end) : "—"}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
+
     if (selectedNode.type === "port") {
       let port: Port | null = null;
       let host: Host | null = null;
@@ -3687,6 +3763,27 @@ export default function MissionDetailPage() {
             <div>Last updated: {formatDate(port.updated_at ?? null)}</div>
             {port.scanned_at && <div>Scanned at: {formatDate(port.scanned_at)}</div>}
           </div>
+          {port.scan_metadata && Object.keys(port.scan_metadata).length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Scan metadata</h3>
+              <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                {"state_reason" in port.scan_metadata && port.scan_metadata.state_reason != null && (
+                  <div style={{ marginBottom: 4 }}>State reason: {String(port.scan_metadata.state_reason)}{"state_reason_ttl" in port.scan_metadata && port.scan_metadata.state_reason_ttl != null ? ` (TTL ${port.scan_metadata.state_reason_ttl})` : ""}</div>
+                )}
+                {"service_conf" in port.scan_metadata && port.scan_metadata.service_conf != null && (
+                  <div style={{ marginBottom: 4 }}>Confidence: {String(port.scan_metadata.service_conf)}</div>
+                )}
+                {"nmap_args" in port.scan_metadata && port.scan_metadata.nmap_args != null && (
+                  <div style={{ marginBottom: 4 }}>Command: <code style={{ fontSize: 11, wordBreak: "break-all" }}>{String(port.scan_metadata.nmap_args)}</code></div>
+                )}
+                {("scan_start" in port.scan_metadata && port.scan_metadata.scan_start != null) || ("scan_end" in port.scan_metadata && port.scan_metadata.scan_end != null) ? (
+                  <div style={{ marginBottom: 4 }}>
+                    Run times: {port.scan_metadata.scan_start != null ? String(port.scan_metadata.scan_start) : "—"} to {port.scan_metadata.scan_end != null ? String(port.scan_metadata.scan_end) : "—"}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          )}
           {(port.description_md ?? "").trim() ? (
             <>
               <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Description</h3>
