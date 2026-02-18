@@ -82,6 +82,7 @@ def _find_or_create_port(
     port_id: int,
     protocol: str,
     state: str,
+    scanned_at: datetime | None = None,
 ) -> tuple[Port, bool]:
     """Find or create port. Returns (port, created)."""
     proto = (protocol or "tcp").lower()
@@ -97,9 +98,14 @@ def _find_or_create_port(
 
     if existing:
         is_same_source = (existing.discovered_by or "").lower() == MASSCAN_SOURCE
+        state_updated = False
         if (not existing.state or is_same_source) and state:
             existing.state = state
             existing.discovered_by = MASSCAN_SOURCE
+            state_updated = True
+        if is_same_source and scanned_at is not None:
+            existing.scanned_at = scanned_at
+        if state_updated or (is_same_source and scanned_at is not None):
             db.commit()
             db.refresh(existing)
         return existing, False
@@ -113,6 +119,7 @@ def _find_or_create_port(
         service_version=None,
         banner=None,
         discovered_by=MASSCAN_SOURCE,
+        scanned_at=scanned_at,
     )
     db.add(port)
     db.commit()
@@ -179,8 +186,13 @@ def run_masscan_import(
 
             for mp in mh.ports:
                 try:
+                    scanned_at = (
+                        datetime.fromtimestamp(mp.timestamp, tz=timezone.utc)
+                        if mp.timestamp is not None
+                        else None
+                    )
                     port, port_created = _find_or_create_port(
-                        db, host, mp.port_id, mp.protocol, mp.state
+                        db, host, mp.port_id, mp.protocol, mp.state, scanned_at=scanned_at
                     )
                     if port_created:
                         summary.ports_created += 1

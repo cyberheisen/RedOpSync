@@ -101,6 +101,7 @@ class Port(Base):
     description_md = Column(Text, nullable=True)
     evidence_md = Column(Text, nullable=True)
     discovered_by = Column(String(64), nullable=True)
+    scanned_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -24,7 +24,8 @@ export function ChangePasswordModal({ onClose, onSuccess, required }: Props) {
       setError("New password and confirmation do not match");
       return;
     }
-    if (newPassword.length < 8) {
+    const newTrimmed = newPassword.trim();
+    if (newTrimmed.length < 8) {
       setError("New password must be at least 8 characters");
       return;
     }
@@ -35,8 +36,8 @@ export function ChangePasswordModal({ onClose, onSuccess, required }: Props) {
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          current_password: currentPassword,
-          new_password: newPassword,
+          current_password: currentPassword.trim(),
+          new_password: newTrimmed,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -109,6 +110,7 @@ export function ChangePasswordModal({ onClose, onSuccess, required }: Props) {
               minLength={8}
               autoComplete="new-password"
             />
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--text-muted)" }}>At least 8 characters required.</p>
           </div>
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: "block", marginBottom: 4, fontSize: 14 }}>Confirm new password</label>
@@ -131,7 +133,16 @@ export function ChangePasswordModal({ onClose, onSuccess, required }: Props) {
                 Cancel
               </button>
             )}
-            <button type="submit" className="theme-btn theme-btn-primary" disabled={saving || newPassword !== confirmPassword || newPassword.length < 8}>
+            <button
+              type="submit"
+              className="theme-btn theme-btn-primary"
+              disabled={
+                saving ||
+                !currentPassword.trim() ||
+                newPassword.trim().length < 8 ||
+                newPassword.trim() !== confirmPassword.trim()
+              }
+            >
               {saving ? "Saving…" : "Change Password"}
             </button>
           </div>

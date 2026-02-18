@@ -220,7 +220,7 @@ export function PortAttachmentsSection({ portId, canEdit, onRefresh }: Props) {
                         {a.uploaded_by_username ?? "—"} • {formatDate(a.created_at)}
                         {(a.source_timestamp ?? a.imported_at) && (
                           <div style={{ marginTop: 2 }}>
-                            {a.source_timestamp ? `Probed at: ${a.source_timestamp}` : a.imported_at ? `Imported at: ${formatDate(a.imported_at)}` : null}
+                            {a.source_timestamp ? `Scanned at: ${a.source_timestamp}` : a.imported_at ? `Imported at: ${formatDate(a.imported_at)}` : null}
                           </div>
                         )}
                       </div>

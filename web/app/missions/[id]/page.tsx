@@ -71,6 +71,7 @@ type Port = {
   description_md?: string | null;
   evidence_md?: string | null;
   discovered_by?: string | null;
+  scanned_at?: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -3684,6 +3685,7 @@ export default function MissionDetailPage() {
             <div>Discovered by: {port.discovered_by ?? "—"}</div>
             <div>First seen: {formatDate(port.created_at ?? null)}</div>
             <div>Last updated: {formatDate(port.updated_at ?? null)}</div>
+            {port.scanned_at && <div>Scanned at: {formatDate(port.scanned_at)}</div>}
           </div>
           {(port.description_md ?? "").trim() ? (
             <>
@@ -3728,7 +3730,7 @@ export default function MissionDetailPage() {
                         <span style={{ fontSize: 14, fontWeight: 500 }}>{ev.caption || ev.filename}</span>
                         {(ev.source_timestamp ?? ev.imported_at ?? ev.created_at) && (
                           <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
-                            {ev.source_timestamp ? `Probed at: ${ev.source_timestamp}` : ev.imported_at ? `Imported at: ${formatDate(ev.imported_at)}` : `Created: ${formatDate(ev.created_at)}`}
+                            {ev.source_timestamp ? `Scanned at: ${ev.source_timestamp}` : ev.imported_at ? `Imported at: ${formatDate(ev.imported_at)}` : `Created: ${formatDate(ev.created_at)}`}
                           </div>
                         )}
                         {evNotes.length > 0 && (
@@ -3776,7 +3778,7 @@ export default function MissionDetailPage() {
                           {ev.caption}
                           {(ev.source_timestamp ?? ev.imported_at) && (
                             <span style={{ display: "block", marginTop: ev.caption ? 4 : 0 }}>
-                              {ev.source_timestamp ? `Probed at: ${ev.source_timestamp}` : ev.imported_at ? `Imported at: ${formatDate(ev.imported_at)}` : null}
+                              {ev.source_timestamp ? `Scanned at: ${ev.source_timestamp}` : ev.imported_at ? `Imported at: ${formatDate(ev.imported_at)}` : null}
                             </span>
                           )}
                         </p>

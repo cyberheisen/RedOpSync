@@ -40,6 +40,7 @@ class PortRead(BaseModel):
     description_md: str | None
     evidence_md: str | None
     discovered_by: str | None
+    scanned_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
