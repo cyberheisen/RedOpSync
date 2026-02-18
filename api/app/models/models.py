@@ -28,6 +28,7 @@ class User(Base):
     username = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
     role = Column(SQLEnum("user", "admin", name="user_role"), nullable=False, default="user")
+    must_change_password = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     disabled_at = Column(DateTime(timezone=True), nullable=True)
 

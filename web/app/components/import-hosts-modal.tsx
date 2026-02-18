@@ -15,7 +15,7 @@ type Props = {
 };
 
 type ImportResult = {
-  format?: "nmap" | "gowitness" | "text" | "whois";
+  format?: "nmap" | "gowitness" | "text" | "whois" | "masscan";
   hosts_created: number;
   hosts_updated?: number;
   subnets_updated?: number;
@@ -139,7 +139,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
             <input
               ref={fileInputRef}
               type="file"
-              accept=".xml,.zip,.txt,.json"
+              accept=".xml,.zip,.txt,.json,.masscan,.lst"
               onChange={handleFileChange}
               style={{ display: "none" }}
             />
@@ -272,6 +272,9 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
               </li>
               <li style={{ marginBottom: 10 }}>
                 <strong>GoWitness</strong>: Results JSON file and all screenshots in a single ZIP.
+              </li>
+              <li style={{ marginBottom: 10 }}>
+                <strong>Masscan</strong>: List output (e.g. <code style={{ fontSize: 12 }}>-oL</code> or default). One line per open port: <code style={{ fontSize: 12 }}>status protocol port ip timestamp</code> (last column = Unix timestamp). Use <code style={{ fontSize: 12 }}>.masscan</code>, <code style={{ fontSize: 12 }}>.lst</code>, or <code style={{ fontSize: 12 }}>.txt</code>.
               </li>
               <li style={{ marginBottom: 10 }}>
                 <strong>Plain text</strong>: One host per line (optional hostname).

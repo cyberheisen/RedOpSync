@@ -13,6 +13,7 @@ def seed_admin(db: Session) -> None:
         username="admin",
         password_hash=hash_password(settings.admin_password),
         role="admin",
+        must_change_password=True,
     )
     db.add(admin)
     db.commit()

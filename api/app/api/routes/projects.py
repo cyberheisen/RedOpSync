@@ -85,6 +85,8 @@ TOOL_RUN_ACTIONS = {
     "gowitness_import_completed",
     "text_import_started",
     "text_import_completed",
+    "masscan_import_started",
+    "masscan_import_completed",
 }
 
 
@@ -95,6 +97,8 @@ def _action_to_tool(action_type: str) -> str:
         return "gowitness"
     if "text" in action_type:
         return "text"
+    if "masscan" in action_type:
+        return "masscan"
     return "unknown"
 
 
@@ -192,10 +196,11 @@ async def import_scan(
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
     fn = file.filename.lower()
-    if not (fn.endswith(".xml") or fn.endswith(".zip") or fn.endswith(".txt") or fn.endswith(".json")):
+    allowed = (".xml", ".zip", ".txt", ".json", ".masscan", ".lst")
+    if not any(fn.endswith(ext) for ext in allowed):
         raise HTTPException(
             status_code=400,
-            detail="Unsupported file type. Use Nmap XML (.xml), GoWitness/ZIP (.zip), plain text (.txt), or whois/RDAP JSON (.json).",
+            detail="Unsupported file type. Use Nmap XML (.xml), GoWitness/ZIP (.zip), plain text (.txt), Masscan list (.masscan, .lst, or .txt), or whois/RDAP JSON (.json).",
         )
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:

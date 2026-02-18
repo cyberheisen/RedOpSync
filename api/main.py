@@ -24,7 +24,7 @@ async def lifespan(app: FastAPI):
     engine.dispose()
 
 
-app = FastAPI(title="RedOpSync API", version="0.0.1", lifespan=lifespan)
+app = FastAPI(title="RedOpSync API", version="1.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,7 +39,7 @@ app.include_router(api_router)
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "app": "redopsync", "version": "0.0.1"}
+    return {"status": "ok", "app": "redopsync", "version": "1.1.0"}
 
 
 @app.websocket("/ws")

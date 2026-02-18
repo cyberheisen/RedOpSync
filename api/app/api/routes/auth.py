@@ -11,7 +11,7 @@ from app.core.security import (
 )
 from app.db.session import get_db
 from app.models.models import User, Session as SessionModel
-from app.schemas.auth import LoginRequest, LoginResponse, UserRead
+from app.schemas.auth import ChangePasswordRequest, LoginRequest, LoginResponse, UserRead
 
 router = APIRouter()
 
@@ -84,7 +84,14 @@ def login(
     sess = SessionModel(user_id=user.id, ip_address=_get_client_ip(request))
     db.add(sess)
     db.commit()
-    return LoginResponse(user=UserRead(id=user.id, username=user.username, role=_role_str(user.role)))
+    return LoginResponse(
+        user=UserRead(
+            id=user.id,
+            username=user.username,
+            role=_role_str(user.role),
+            must_change_password=getattr(user, "must_change_password", False),
+        )
+    )
 
 
 def _cookie_opts(request: Request) -> tuple[bool, str]:
@@ -105,7 +112,31 @@ def logout(request: Request, response: Response):
 
 @router.get("/me", response_model=UserRead)
 def me(current_user: User = Depends(get_current_user)):
-    return UserRead(id=current_user.id, username=current_user.username, role=_role_str(current_user.role))
+    return UserRead(
+        id=current_user.id,
+        username=current_user.username,
+        role=_role_str(current_user.role),
+        must_change_password=getattr(current_user, "must_change_password", False),
+    )
+
+
+@router.post("/change-password", status_code=200)
+def change_password(
+    body: ChangePasswordRequest,
+    db: DBSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Change current user's password. Clears must_change_password if set."""
+    if not verify_password(body.current_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Current password is incorrect",
+        )
+    current_user.password_hash = hash_password(body.new_password)
+    current_user.must_change_password = False
+    db.commit()
+    db.refresh(current_user)
+    return {"ok": True}
 
 
 @router.get("/users", response_model=list[UserRead])
@@ -115,4 +146,12 @@ def list_users(
 ):
     """List users (for assignee dropdowns). Any authenticated user can list."""
     users = db.query(User).filter(User.disabled_at.is_(None)).order_by(User.username).all()
-    return [UserRead(id=u.id, username=u.username, role=_role_str(u.role)) for u in users]
+    return [
+        UserRead(
+            id=u.id,
+            username=u.username,
+            role=_role_str(u.role),
+            must_change_password=getattr(u, "must_change_password", False),
+        )
+        for u in users
+    ]

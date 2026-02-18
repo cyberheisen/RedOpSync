@@ -19,6 +19,8 @@ from sqlalchemy.orm import Session
 
 from app.services.gowitness_import import run_gowitness_import as _run_gowitness
 from app.services.gowitness_parser import parse_gowitness_directory
+from app.services.masscan_import import run_masscan_import as _run_masscan
+from app.services.masscan_parser import is_masscan_list_content, parse_masscan_list
 from app.services.nmap_import import run_nmap_import as _run_nmap
 from app.services.nmap_parser import detect_nmap_format, parse_nmap_xml
 from app.services.text_import import run_text_import as _run_text
@@ -28,6 +30,7 @@ IMPORT_FORMAT_NMAP = "nmap"
 IMPORT_FORMAT_GOWITNESS = "gowitness"
 IMPORT_FORMAT_TEXT = "text"
 IMPORT_FORMAT_WHOIS = "whois"
+IMPORT_FORMAT_MASSCAN = "masscan"
 
 
 def _looks_like_whois_json(content: bytes) -> bool:
@@ -47,10 +50,20 @@ def detect_import_format(content: bytes, filename: str) -> tuple[str | None, str
     Detect import format from file content and filename.
 
     Returns (format, error_message).
-    - format: 'nmap' | 'gowitness' | 'text' | 'whois' | None
+    - format: 'nmap' | 'gowitness' | 'text' | 'whois' | 'masscan' | None
     - error_message: empty if format detected, else human-readable error
     """
     fn = (filename or "").lower().strip()
+
+    # Masscan list: explicit extensions or .txt that looks like masscan (open tcp port ip timestamp)
+    if fn.endswith(".masscan") or fn.endswith(".lst"):
+        if is_masscan_list_content(content):
+            return IMPORT_FORMAT_MASSCAN, ""
+        return None, "File does not look like Masscan list output (expected: status protocol port ip timestamp)."
+    if fn.endswith(".txt"):
+        if is_masscan_list_content(content):
+            return IMPORT_FORMAT_MASSCAN, ""
+        return IMPORT_FORMAT_TEXT, ""
 
     if fn.endswith(".json"):
         if _looks_like_whois_json(content):
@@ -114,7 +127,7 @@ def detect_import_format(content: bytes, filename: str) -> tuple[str | None, str
     if detect_nmap_format(content, filename) == "xml":
         return IMPORT_FORMAT_NMAP, ""
 
-    return None, "Unsupported file format. Use Nmap XML (.xml), GoWitness ZIP (.zip), plain text (.txt), or whois/RDAP JSON (.json)."
+    return None, "Unsupported file format. Use Nmap XML (.xml), GoWitness ZIP (.zip), plain text (.txt), Masscan list (.masscan, .lst, or .txt), or whois/RDAP JSON (.json)."
 
 
 def run_import(
@@ -233,6 +246,34 @@ def run_import(
             "subnets_updated": summary.subnets_updated,
             "ports_created": 0,
             "ports_updated": 0,
+            "evidence_created": 0,
+            "errors": summary.errors,
+        }
+
+    if fmt == IMPORT_FORMAT_MASSCAN:
+        parse_result = parse_masscan_list(content, filename)
+        if parse_result.errors and not parse_result.hosts:
+            raise ValueError(
+                parse_result.errors[0]
+                if len(parse_result.errors) == 1
+                else "; ".join(parse_result.errors[:3])
+            )
+        if not parse_result.hosts:
+            return {
+                "format": "masscan",
+                "hosts_created": 0,
+                "hosts_updated": 0,
+                "ports_created": 0,
+                "ports_updated": 0,
+                "errors": parse_result.errors,
+            }
+        summary = _run_masscan(db, project_id, parse_result, user_id, request_ip)
+        return {
+            "format": "masscan",
+            "hosts_created": summary.hosts_created,
+            "hosts_updated": summary.hosts_updated,
+            "ports_created": summary.ports_created,
+            "ports_updated": summary.ports_updated,
             "evidence_created": 0,
             "errors": summary.errors,
         }

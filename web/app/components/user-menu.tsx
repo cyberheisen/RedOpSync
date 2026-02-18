@@ -210,7 +210,14 @@ export function UserMenu() {
       )}
 
       {changePasswordModalOpen && (
-        <ChangePasswordModal onClose={() => setChangePasswordModalOpen(false)} />
+        <ChangePasswordModal
+          onClose={() => setChangePasswordModalOpen(false)}
+          onSuccess={() => {
+            fetch(apiUrl("/api/auth/me"), { credentials: "include" })
+              .then((res) => (res.ok ? res.json() : null))
+              .then((data) => data && setUser(data));
+          }}
+        />
       )}
 
       {profileModalOpen && (

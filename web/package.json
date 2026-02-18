@@ -1,7 +1,7 @@
 {
   "name": "redopsync-web",
   "private": true,
-  "version": "0.0.2",
+  "version": "1.1.0",
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",

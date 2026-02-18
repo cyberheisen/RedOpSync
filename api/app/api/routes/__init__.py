@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api")
 
 @router.get("/version")
 def version():
-    return {"name": "RedOpSync", "version": "0.0.1"}
+    return {"name": "RedOpSync", "version": "1.1.0"}
 
 
 router.include_router(auth.router, prefix="/auth", tags=["auth"])

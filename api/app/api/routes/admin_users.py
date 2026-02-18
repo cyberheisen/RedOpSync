@@ -200,11 +200,12 @@ def reset_password(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    """Reset user password (admin only)."""
+    """Reset user password (admin only). User will be prompted to change password on next login."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.password_hash = hash_password(body.temporary_password)
+    user.must_change_password = True
     log_audit(
         db,
         user_id=current_user.id,

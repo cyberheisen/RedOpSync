@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiUrl } from "../lib/api";
 import { APP_VERSION } from "../lib/version";
+import { ChangePasswordModal } from "./change-password-modal";
 import { Logo } from "./logo";
 import { UserMenu } from "./user-menu";
 
-type User = { id: string; username: string; role: string } | null;
+type User = { id: string; username: string; role: string; must_change_password?: boolean } | null;
 
 const mainNavItems = [
   { href: "/missions", label: "Missions", icon: "📁" },
@@ -39,6 +40,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const showMainSidebar = !isLogin && !isAdmin && user;
+  const mustChangePassword = Boolean(user?.must_change_password);
+
+  const refreshMe = useCallback(() => {
+    fetch(apiUrl("/api/auth/me"), { credentials: "include" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then(setUser);
+  }, []);
 
   if (isLogin) {
     return (
@@ -87,6 +95,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   if (isAdmin) {
     return <>{children}</>;
+  }
+
+  if (showMainSidebar && mustChangePassword) {
+    return (
+      <>
+        <header
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            padding: "12px 24px",
+            borderBottom: "1px solid var(--border)",
+            backgroundColor: "var(--bg-panel)",
+          }}
+        >
+          <Logo variant="nav" />
+          <span style={{ fontSize: 14, color: "var(--text-muted)" }}>Change password required</span>
+        </header>
+        <div style={{ flex: 1 }} />
+        <ChangePasswordModal required onClose={() => {}} onSuccess={refreshMe} />
+      </>
+    );
   }
 
   if (!showMainSidebar) {

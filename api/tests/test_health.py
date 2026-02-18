@@ -11,4 +11,4 @@ def test_api_version(client):
     assert r.status_code == 200
     data = r.json()
     assert data["name"] == "RedOpSync"
-    assert data["version"] == "0.0.1"
+    assert data["version"] == "1.1.0"

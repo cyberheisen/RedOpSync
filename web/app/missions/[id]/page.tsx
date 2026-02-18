@@ -2904,7 +2904,7 @@ export default function MissionDetailPage() {
       return (
         <div style={{ padding: 24 }}>
           <h2 style={{ margin: "0 0 16px", fontSize: "1.25rem" }}>Tool runs</h2>
-          <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>When imports (Nmap, GoWitness, Text) were run for this mission.</p>
+          <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>When imports (Nmap, Masscan, GoWitness, Text) were run for this mission.</p>
           {toolRunsLoading ? (
             <p style={{ color: "var(--text-muted)" }}>Loading…</p>
           ) : toolRunsEvents.length === 0 ? (
@@ -2924,7 +2924,7 @@ export default function MissionDetailPage() {
                   {toolRunsEvents.map((ev) => (
                     <tr key={ev.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
                       <td style={{ padding: "8px 12px", whiteSpace: "nowrap", fontSize: 12 }} title={ev.timestamp}>{formatTs(ev.timestamp)}</td>
-                      <td style={{ padding: "8px 12px" }}>{ev.tool === "nmap" ? "Nmap" : ev.tool === "gowitness" ? "GoWitness" : ev.tool === "text" ? "Text" : ev.tool}</td>
+                      <td style={{ padding: "8px 12px" }}>{ev.tool === "nmap" ? "Nmap" : ev.tool === "gowitness" ? "GoWitness" : ev.tool === "text" ? "Text" : ev.tool === "masscan" ? "Masscan" : ev.tool}</td>
                       <td style={{ padding: "8px 12px", fontSize: 12, color: "var(--text-muted)" }}>{ev.action_type.includes("started") ? "Started" : "Completed"}</td>
                       <td style={{ padding: "8px 12px", fontSize: 13, color: "var(--text-muted)" }}>{formatToolRunDetails(ev.details, ev.action_type)}</td>
                     </tr>

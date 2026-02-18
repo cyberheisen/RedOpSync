@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { User, FolderOpen, Lock, Package, Settings, ScrollText, Tag } from "lucide-react";
 import { apiUrl } from "../lib/api";
+import { ChangePasswordModal } from "../components/change-password-modal";
 import { Logo } from "../components/logo";
 
-type UserType = { id: string; username: string; role: string } | null;
+type UserType = { id: string; username: string; role: string; must_change_password?: boolean } | null;
 
 const navIconStyle = { width: 18, height: 18, flexShrink: 0 };
 
@@ -57,7 +58,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     router.replace("/login");
   }
 
+  const refreshMe = useCallback(() => {
+    fetch(apiUrl("/api/auth/me"), { credentials: "include" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then(setUser);
+  }, []);
+
   const fontFamily = "var(--font-sans)";
+  const mustChangePassword = Boolean(user?.must_change_password);
+
   if (loading) {
     return (
       <div style={{ padding: 48, textAlign: "center", color: "var(--text-muted)", fontFamily }}>
@@ -76,6 +85,53 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <Link href="/missions" className="theme-btn theme-btn-primary">
           Return to Missions
         </Link>
+      </div>
+    );
+  }
+
+  if (mustChangePassword) {
+    return (
+      <div style={{ display: "flex", minHeight: "100vh", fontFamily }}>
+        <aside
+          style={{
+            width: 220,
+            backgroundColor: "#0a0c0f",
+            borderRight: "1px solid var(--border)",
+            display: "flex",
+            flexDirection: "column",
+            flexShrink: 0,
+            fontFamily,
+          }}
+        >
+          <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
+            <Link href="/admin" style={{ textDecoration: "none" }}>
+              <Logo variant="nav" />
+            </Link>
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 11,
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: 1,
+                color: "var(--accent)",
+                padding: "4px 8px",
+                backgroundColor: "var(--accent-bg)",
+                borderRadius: 4,
+                display: "inline-block",
+              }}
+            >
+              Admin Console
+            </div>
+          </div>
+          <div style={{ flex: 1 }} />
+          <div style={{ padding: "16px 20px", borderTop: "1px solid var(--border)", fontSize: 13, color: "var(--text-muted)" }}>
+            Change password required
+          </div>
+        </aside>
+        <main style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "var(--bg)" }}>
+          <ChangePasswordModal required onClose={() => {}} onSuccess={refreshMe} />
+        </main>
       </div>
     );
   }

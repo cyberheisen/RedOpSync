@@ -1,0 +1,5 @@
+# masscan list output - columns: status protocol port ip timestamp
+open tcp 80 192.168.1.1 1699123456
+open tcp 443 192.168.1.1 1699123457
+open tcp 22 10.0.0.5 1699123458
+open udp 53 10.0.0.5 1699123459

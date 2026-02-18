@@ -83,6 +83,8 @@ This starts:
 - **Worker** — background job runner (uses API context)
 - **Agent** — optional executor agent (for future tool runs)
 
+Containers use **`restart: unless-stopped`**, so they restart on failure and after a host reboot. To run the stack as a system service (start on boot), see [deploy/README.md](deploy/README.md).
+
 ### 4. Open the application
 
 - **Web UI:** [http://localhost:3000](http://localhost:3000)  
