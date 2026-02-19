@@ -177,52 +177,145 @@ def _get_client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
+ALLOWED_IMPORT_EXTENSIONS = (".xml", ".zip", ".txt", ".json", ".masscan", ".lst")
+
+
+def _aggregate_import_results(results: list[dict], formats: list[str]) -> dict:
+    """Sum numeric fields and concatenate errors; set format to first or 'mixed'."""
+    if not results:
+        return {
+            "format": "unknown",
+            "hosts_created": 0,
+            "hosts_updated": 0,
+            "subnets_updated": 0,
+            "ports_created": 0,
+            "ports_updated": 0,
+            "evidence_created": 0,
+            "notes_created": 0,
+            "screenshots_imported": 0,
+            "metadata_records_imported": 0,
+            "skipped": 0,
+            "errors": [],
+            "files_processed": 0,
+        }
+    numeric_keys = (
+        "hosts_created",
+        "hosts_updated",
+        "subnets_updated",
+        "ports_created",
+        "ports_updated",
+        "evidence_created",
+        "notes_created",
+        "screenshots_imported",
+        "metadata_records_imported",
+        "skipped",
+    )
+    agg = {k: 0 for k in numeric_keys}
+    agg["errors"] = []
+    for r in results:
+        for k in numeric_keys:
+            agg[k] += r.get(k) or 0
+        for e in r.get("errors") or []:
+            agg["errors"].append(e)
+    agg["format"] = formats[0] if len(set(formats)) == 1 else "mixed"
+    agg["files_processed"] = len(results)
+    return agg
+
+
 @router.post("/{project_id}/import")
 async def import_scan(
     project_id: UUID,
     request: Request,
-    file: UploadFile = File(...),
+    file: list[UploadFile] = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
     Unified import: auto-detects format and runs the appropriate importer.
+    Accepts one or more files; each is processed and results are aggregated.
 
     Supports:
     - Nmap XML (.xml or .zip containing .xml)
     - GoWitness (.zip with PNG/JPEG and/or JSONL)
     - Plain text (.txt) - one host per line: IP [hostname]
+    - Masscan list (.masscan, .lst, or .txt)
+    - Whois/RDAP JSON (.json)
     """
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No filename provided")
-    fn = file.filename.lower()
-    allowed = (".xml", ".zip", ".txt", ".json", ".masscan", ".lst")
-    if not any(fn.endswith(ext) for ext in allowed):
-        raise HTTPException(
-            status_code=400,
-            detail="Unsupported file type. Use Nmap XML (.xml), GoWitness/ZIP (.zip), plain text (.txt), Masscan list (.masscan, .lst, or .txt), or whois/RDAP JSON (.json).",
-        )
+    files = [f for f in file if f.filename and (f.filename or "").strip()]
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    data = await file.read()
-    if len(data) == 0:
-        raise HTTPException(status_code=400, detail="Empty file")
+    request_ip = _get_client_ip(request)
+    results: list[dict] = []
+    formats_used: list[str] = []
 
-    try:
-        result = run_import(
-            db,
-            project_id,
-            data,
-            file.filename or "upload",
-            current_user.id,
-            _get_client_ip(request),
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    for upload in files:
+        fn = (upload.filename or "").strip().lower()
+        if not any(fn.endswith(ext) for ext in ALLOWED_IMPORT_EXTENSIONS):
+            results.append({
+                "format": "unknown",
+                "hosts_created": 0,
+                "hosts_updated": 0,
+                "ports_created": 0,
+                "ports_updated": 0,
+                "errors": [f"{upload.filename}: Unsupported file type. Use Nmap XML (.xml), GoWitness/ZIP (.zip), plain text (.txt), Masscan list (.masscan, .lst, or .txt), or whois/RDAP JSON (.json)."],
+            })
+            formats_used.append("unknown")
+            continue
+        try:
+            data = await upload.read()
+        except Exception as e:
+            results.append({
+                "format": "unknown",
+                "hosts_created": 0,
+                "hosts_updated": 0,
+                "ports_created": 0,
+                "ports_updated": 0,
+                "errors": [f"{upload.filename}: Failed to read file — {e}"],
+            })
+            formats_used.append("unknown")
+            continue
+        if len(data) == 0:
+            results.append({
+                "format": "unknown",
+                "hosts_created": 0,
+                "hosts_updated": 0,
+                "ports_created": 0,
+                "ports_updated": 0,
+                "errors": [f"{upload.filename}: Empty file"],
+            })
+            formats_used.append("unknown")
+            continue
+        try:
+            result = run_import(
+                db,
+                project_id,
+                data,
+                upload.filename or "upload",
+                current_user.id,
+                request_ip,
+            )
+            # Prefix errors with filename so user can see which file had which error
+            errors = result.get("errors") or []
+            result["errors"] = [f"{upload.filename}: {e}" if e else f"{upload.filename}" for e in errors]
+            results.append(result)
+            formats_used.append((result.get("format") or "unknown"))
+        except ValueError as e:
+            results.append({
+                "format": "unknown",
+                "hosts_created": 0,
+                "hosts_updated": 0,
+                "ports_created": 0,
+                "ports_updated": 0,
+                "errors": [f"{upload.filename}: {e}"],
+            })
+            formats_used.append("unknown")
 
-    return result
+    return _aggregate_import_results(results, formats_used)
 
 
 @router.get("/{project_id}/reports/builder/columns")

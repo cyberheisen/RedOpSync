@@ -15,7 +15,7 @@ type Props = {
 };
 
 type ImportResult = {
-  format?: "nmap" | "gowitness" | "text" | "whois" | "masscan";
+  format?: "nmap" | "gowitness" | "text" | "whois" | "masscan" | "mixed";
   hosts_created: number;
   hosts_updated?: number;
   subnets_updated?: number;
@@ -27,10 +27,11 @@ type ImportResult = {
   metadata_records_imported?: number;
   errors: string[];
   skipped?: number;
+  files_processed?: number;
 };
 
 export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Props) {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -43,24 +44,24 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
       : `Import into Subnet: ${context.cidr}${context.name ? ` (${context.name})` : ""}`;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f) {
+    const files = e.target.files;
+    if (files && files.length > 0) {
       setError(null);
-      setSelectedFile(f);
+      setSelectedFiles(Array.from(files));
     } else {
-      setSelectedFile(null);
+      setSelectedFiles([]);
       setError(null);
     }
   };
 
   const handleImport = async () => {
-    if (!selectedFile) return;
+    if (selectedFiles.length === 0) return;
     setLoading(true);
     setError(null);
     setResult(null);
     try {
       const fd = new FormData();
-      fd.append("file", selectedFile);
+      selectedFiles.forEach((f) => fd.append("file", f));
       const res = await fetch(apiUrl(`/api/projects/${projectId}/import`), {
         method: "POST",
         credentials: "include",
@@ -91,7 +92,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
   const handleFileClick = () => fileInputRef.current?.click();
 
   const handleReset = () => {
-    setSelectedFile(null);
+    setSelectedFiles([]);
     setResult(null);
     setError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -140,6 +141,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
               ref={fileInputRef}
               type="file"
               accept=".xml,.zip,.txt,.json,.masscan,.lst"
+              multiple
               onChange={handleFileChange}
               style={{ display: "none" }}
             />
@@ -154,8 +156,28 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
               }}
               onClick={handleFileClick}
             >
-              {selectedFile ? selectedFile.name : "Choose file"}
+              {selectedFiles.length === 0
+                ? "Choose file(s)"
+                : selectedFiles.length === 1
+                  ? selectedFiles[0].name
+                  : `${selectedFiles.length} files selected`}
             </div>
+            {selectedFiles.length > 1 && (
+              <ul
+                style={{
+                  margin: "0 0 16px",
+                  paddingLeft: 20,
+                  fontSize: 13,
+                  color: "var(--text-muted)",
+                  maxHeight: 120,
+                  overflowY: "auto",
+                }}
+              >
+                {selectedFiles.map((f, i) => (
+                  <li key={i}>{f.name}</li>
+                ))}
+              </ul>
+            )}
             {error && (
               <p style={{ margin: "0 0 12px", color: "var(--error)", fontSize: 14 }}>{error}</p>
             )}
@@ -167,7 +189,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
                 type="button"
                 className="theme-btn theme-btn-primary"
                 onClick={handleImport}
-                disabled={!selectedFile || loading}
+                disabled={selectedFiles.length === 0 || loading}
               >
                 {loading ? "Importing…" : "Import"}
               </button>
@@ -187,6 +209,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
               {result.format && (
                 <p style={{ margin: "0 0 8px", fontWeight: 600, color: "var(--accent)" }}>
                   Imported as {result.format}
+                  {(result.files_processed ?? 0) > 1 && ` (${result.files_processed} files)`}
                 </p>
               )}
               <p style={{ margin: "0 0 4px" }}>Hosts created: {result.hosts_created}</p>
