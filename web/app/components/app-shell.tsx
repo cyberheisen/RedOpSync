@@ -20,6 +20,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [user, setUser] = useState<User>(null);
   const [loading, setLoading] = useState(true);
+  const [serverHostname, setServerHostname] = useState<string | null>(null);
 
   const isLogin = pathname === "/login";
   const isAdmin = pathname?.startsWith("/admin");
@@ -32,6 +33,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         setLoading(false);
       })
       .catch(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    fetch(apiUrl("/health"), { credentials: "include" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.hostname) setServerHostname(data.hostname);
+      })
+      .catch(() => {});
   }, []);
 
   async function handleLogout() {
@@ -82,6 +92,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <span>© {new Date().getFullYear()} RedOpSync</span>
           <span>·</span>
           <span>v{APP_VERSION}</span>
+          {serverHostname && <><span>·</span><span>{serverHostname}</span></>}
           <span>·</span>
           <span>Licensed under the MIT License</span>
           <span>·</span>
@@ -162,6 +173,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <span>© {new Date().getFullYear()} RedOpSync</span>
           <span>·</span>
           <span>v{APP_VERSION}</span>
+          {serverHostname && <><span>·</span><span>{serverHostname}</span></>}
           <span>·</span>
           <span>Licensed under the MIT License</span>
           <span>·</span>
@@ -307,6 +319,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <span>© {new Date().getFullYear()} RedOpSync</span>
         <span>·</span>
         <span>v{APP_VERSION}</span>
+        {serverHostname && <><span>·</span><span>{serverHostname}</span></>}
         <span>·</span>
         <span>Licensed under the MIT License</span>
         <span>·</span>

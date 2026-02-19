@@ -1,3 +1,5 @@
+import os
+import socket
 from contextlib import asynccontextmanager
 from uuid import UUID
 
@@ -39,7 +41,8 @@ app.include_router(api_router)
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "app": "redopsync", "version": "1.1.0"}
+    hostname = os.environ.get("HOSTNAME", "").strip() or socket.gethostname()
+    return {"status": "ok", "app": "redopsync", "version": "1.1.0", "hostname": hostname}
 
 
 @app.websocket("/ws")

@@ -39,7 +39,7 @@ import {
   type SeverityLevel,
   type VulnLike,
 } from "../../lib/severity";
-import { Globe, TriangleAlert, Tag, CheckSquare, FileText, HelpCircle, Hash, Network, Wrench, GitCompare, ScanText, Layers, Binary, Key, Link as LinkIcon, ListFilter, Sparkles, Braces, Code, Search, Clock, Box } from "lucide-react";
+import { Globe, TriangleAlert, Tag, CheckSquare, FileText, HelpCircle, Hash, Network, Wrench, GitCompare, ScanText, Layers, Binary, Key, Link as LinkIcon, ListFilter, Sparkles, Braces, Code, Search, Clock } from "lucide-react";
 
 type Subnet = {
   id: string;
@@ -172,7 +172,6 @@ type SelectedNode =
   | { type: "host-whois"; hostId: string }
   | { type: "host-whois-field"; hostId: string; field: "network" | "asn" | "country" | "cidr" | "type" | "registry" }
   | { type: "port"; id: string }
-  | { type: "port-device"; portId: string }
   | { type: "port-evidence"; id: string; portId: string; hostId: string }
   | { type: "host-vulnerabilities"; hostId: string }
   | { type: "vuln-instance"; id: string }
@@ -1094,15 +1093,44 @@ export default function MissionDetailPage() {
     }
   }, [mission, vulnDefinitionsLoaded, vulnDefinitionsLoading, loadVulnDefinitions]);
 
-  const hostIds = hosts.map((h) => h.id).sort().join(",");
+  const loadPortsAndVulnsForProject = useCallback(() => {
+    if (!missionId || !mission) return;
+    const sortMode = mission.sort_mode || "cidr_asc";
+    const sortQ = `&sort_mode=${encodeURIComponent(sortMode)}`;
+    Promise.all([
+      fetch(apiUrl(`/api/ports?project_id=${missionId}${sortQ}`), { credentials: "include" }),
+      fetch(apiUrl(`/api/vulnerability-instances?project_id=${missionId}`), { credentials: "include" }),
+    ])
+      .then(async ([portsRes, vulnsRes]) => {
+        const portsList: Port[] = portsRes.ok ? await portsRes.json() : [];
+        const vulnsList: VulnInstance[] = vulnsRes.ok ? await vulnsRes.json() : [];
+        const portsByHostNext: Record<string, Port[]> = {};
+        const vulnsByHostNext: Record<string, VulnInstance[]> = {};
+        for (const p of portsList) {
+          const hid = p.host_id;
+          if (!portsByHostNext[hid]) portsByHostNext[hid] = [];
+          portsByHostNext[hid].push(p);
+        }
+        for (const v of vulnsList) {
+          const hid = v.host_id;
+          if (!vulnsByHostNext[hid]) vulnsByHostNext[hid] = [];
+          vulnsByHostNext[hid].push(v);
+        }
+        setPortsByHost((prev) => ({ ...prev, ...portsByHostNext }));
+        setVulnsByHost((prev) => ({ ...prev, ...vulnsByHostNext }));
+        const allHostIdsFromPorts = new Set(portsList.map((p) => p.host_id));
+        const allHostIdsFromVulns = new Set(vulnsList.map((v) => v.host_id));
+        const allIds = new Set([...allHostIdsFromPorts, ...allHostIdsFromVulns, ...hosts.map((h) => h.id)]);
+        setPortsLoaded((prev) => new Set([...prev, ...allIds]));
+        setVulnsLoaded((prev) => new Set([...prev, ...allIds]));
+      })
+      .catch(() => {});
+  }, [missionId, mission, hosts]);
+
   useEffect(() => {
     if (!mission || hosts.length === 0) return;
-    const sortMode = mission.sort_mode || "cidr_asc";
-    hosts.forEach((h) => {
-      loadPortsForHost(h.id, sortMode);
-      loadVulnsForHost(h.id);
-    });
-  }, [mission?.id, mission?.sort_mode, hostIds, loadPortsForHost, loadVulnsForHost]);
+    loadPortsAndVulnsForProject();
+  }, [mission?.id, mission?.sort_mode, hosts.length, loadPortsAndVulnsForProject]);
 
   const selectedHost =
     selectedNode?.type === "host" || selectedNode?.type === "host-ports" || selectedNode?.type === "host-whois" || selectedNode?.type === "host-whois-field" || selectedNode?.type === "host-vulnerabilities" || (selectedNode?.type === "note" && selectedNode.target === "host")
@@ -1966,7 +1994,6 @@ export default function MissionDetailPage() {
       if (selectedNode?.type === "subnet" && selectedNode.id === subnetId) setSelectedNode(null);
       if (selectedNode && (selectedNode.type === "host" || selectedNode.type === "host-ports" || selectedNode.type === "host-whois" || selectedNode.type === "host-whois-field" || selectedNode.type === "host-vulnerabilities") && hostIdsToRemove.has(selectedNode.type === "host" ? selectedNode.id : selectedNode.hostId)) setSelectedNode(null);
       if (selectedNode?.type === "port" && portIdsToRemove.has(selectedNode.id)) setSelectedNode(null);
-      if (selectedNode?.type === "port-device" && portIdsToRemove.has(selectedNode.portId)) setSelectedNode(null);
       if (selectedNode?.type === "port-evidence" && portIdsToRemove.has(selectedNode.portId)) setSelectedNode(null);
       if (selectedNode?.type === "note" && (selectedNode.targetId === subnetId || (selectedNode.target === "host" && hostIdsToRemove.has(selectedNode.targetId)))) setSelectedNode(null);
       setToast("Subnet and all hosts, ports, evidence, and notes deleted");
@@ -2292,9 +2319,9 @@ export default function MissionDetailPage() {
     const vulnsExp = expanded.has(vulnsKey);
     const whoisExp = expanded.has(whoisKey);
     const allPorts = portsByHost[h.id] ?? [];
-    const ports = filterActive ? allPorts.filter((p) => matchingPortIds.has(p.id)) : allPorts;
+    const ports = allPorts;
     const allVulns = vulnsByHost[h.id] ?? [];
-    const vulns = filterActive ? allVulns.filter((v) => matchingVulnIds.has(v.id)) : allVulns;
+    const vulns = allVulns;
     const portsLoad = portsLoading.has(h.id);
     const vulnsLoad = vulnsLoading.has(h.id);
     const notesLoad = notesLoading.has(h.id);
@@ -2604,16 +2631,6 @@ export default function MissionDetailPage() {
                         </div>
                         {portEvExp && (
                           <>
-                            {p.scan_metadata && Object.keys(p.scan_metadata).length > 0 && (
-                              <div
-                                className={"theme-tree-node" + (selectedNode?.type === "port-device" && selectedNode.portId === p.id ? " selected" : "")}
-                                style={nodeStyle(baseDepth + 3)}
-                                onClick={(evt) => { evt.stopPropagation(); setSelectedNode({ type: "port-device", portId: p.id }); }}
-                              >
-                                <span style={{ width: 14 }}><Box size={14} style={{ display: "inline-block", verticalAlign: "middle" }} /></span>
-                                <span>Device</span>
-                              </div>
-                            )}
                             {projectNotes.filter((n) => n.target_type === "port" && n.target_id === p.id).map((n) => {
                                 const isNoteSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "port";
                                 const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
@@ -3292,9 +3309,9 @@ export default function MissionDetailPage() {
       const host = hosts.find((h) => h.id === selectedNode.id);
       if (!host) return null;
       const allPorts = portsByHost[host.id] ?? [];
-      const ports = filterActive ? allPorts.filter((p) => matchingPortIds.has(p.id)) : allPorts;
+      const ports = allPorts;
       const allVulns = vulnsByHost[host.id] ?? [];
-      const vulns = filterActive ? allVulns.filter((v) => matchingVulnIds.has(v.id)) : allVulns;
+      const vulns = allVulns;
       const hostNotes = projectNotes.filter((n) => n.target_type === "host" && n.target_id === host.id);
       const hostTodos = projectTodos.filter((t) => t.target_type === "host" && t.target_id === host.id);
       const hostTags = getItemTagsFor("host", host.id);
@@ -3434,7 +3451,7 @@ export default function MissionDetailPage() {
       const host = hosts.find((h) => h.id === selectedNode.hostId);
       if (!host) return null;
       const allPorts = portsByHost[host.id] ?? [];
-      const ports = filterActive ? allPorts.filter((p) => matchingPortIds.has(p.id)) : allPorts;
+      const ports = allPorts;
       return (
         <div style={{ padding: 24 }}>
           <div style={{ marginBottom: 8 }}>
@@ -3675,50 +3692,6 @@ export default function MissionDetailPage() {
               <div className="note-markdown-content" style={{ lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: renderMarkdown((vuln.definition_evidence_md ?? vuln.notes_md) ?? "") || "" }} />
             </>
           ) : null}
-        </div>
-      );
-    }
-
-    if (selectedNode.type === "port-device") {
-      let port: Port | null = null;
-      let host: Host | null = null;
-      for (const h of hosts) {
-        const found = (portsByHost[h.id] ?? []).find((p) => p.id === selectedNode.portId);
-        if (found) {
-          port = found;
-          host = h;
-          break;
-        }
-      }
-      if (!port || !host || !port.scan_metadata) return null;
-      const meta = port.scan_metadata;
-      return (
-        <div style={{ padding: 24 }}>
-          <h2 style={{ margin: "0 0 8px", fontSize: "1.25rem" }}>Device</h2>
-          <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>{port.number}/{port.protocol} on {hostLabel(host)}</p>
-          {"devicetype" in meta && meta.devicetype != null && (
-            <div style={{ marginBottom: 16 }}>
-              <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Device type</h3>
-              <p style={{ fontSize: 15 }}>{String(meta.devicetype)}</p>
-            </div>
-          )}
-          <h3 style={{ fontSize: "1rem", marginBottom: 8 }}>Scan metadata</h3>
-          <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
-            {"state_reason" in meta && meta.state_reason != null && (
-              <div style={{ marginBottom: 4 }}>State reason: {String(meta.state_reason)}{"state_reason_ttl" in meta && meta.state_reason_ttl != null ? ` (TTL ${meta.state_reason_ttl})` : ""}</div>
-            )}
-            {"service_conf" in meta && meta.service_conf != null && (
-              <div style={{ marginBottom: 4 }}>Confidence: {String(meta.service_conf)}</div>
-            )}
-            {"nmap_args" in meta && meta.nmap_args != null && (
-              <div style={{ marginBottom: 4 }}>Command: <code style={{ fontSize: 11, wordBreak: "break-all" }}>{String(meta.nmap_args)}</code></div>
-            )}
-            {("scan_start" in meta && meta.scan_start != null) || ("scan_end" in meta && meta.scan_end != null) ? (
-              <div style={{ marginBottom: 4 }}>
-                Run times: {meta.scan_start != null ? String(meta.scan_start) : "—"} to {meta.scan_end != null ? String(meta.scan_end) : "—"}
-              </div>
-            ) : null}
-          </div>
         </div>
       );
     }

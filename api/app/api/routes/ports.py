@@ -12,7 +12,7 @@ from fastapi import status
 from app.core.config import settings
 from app.core.deps import get_current_user
 from app.db.session import get_db
-from app.models.models import Evidence, Port, Host, User
+from app.models.models import Evidence, Port, Host, Project, User
 from app.schemas.port import PortCreate, PortUpdate, PortRead, PortReadWithAttachments, PortAttachmentSummary
 from app.schemas.evidence import EvidenceRead, EvidenceNotesUpdate
 from app.services.lock import require_lock
@@ -22,17 +22,33 @@ from app.services.sort import apply_port_order, SORT_MODES, DEFAULT_SORT
 router = APIRouter()
 
 
+def _resolve_port_sort_mode(db: Session, project_id: UUID | None, sort_mode: str | None) -> str:
+    if sort_mode and sort_mode in SORT_MODES:
+        return sort_mode
+    if project_id:
+        proj = db.query(Project).filter(Project.id == project_id).first()
+        if proj and getattr(proj, "sort_mode", None) in SORT_MODES:
+            return proj.sort_mode
+    return DEFAULT_SORT
+
+
 @router.get("", response_model=list[PortRead])
 def list_ports(
     host_id: UUID | None = Query(None),
+    project_id: UUID | None = Query(None),
     sort_mode: str | None = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     q = db.query(Port)
-    if host_id is not None:
+    if project_id is not None:
+        q = q.join(Host).filter(Host.project_id == project_id)
+        mode = _resolve_port_sort_mode(db, project_id, sort_mode)
+    elif host_id is not None:
         q = q.filter(Port.host_id == host_id)
-    mode = sort_mode if sort_mode in SORT_MODES else DEFAULT_SORT
+        mode = sort_mode if sort_mode in SORT_MODES else DEFAULT_SORT
+    else:
+        mode = sort_mode if sort_mode in SORT_MODES else DEFAULT_SORT
     q = apply_port_order(q, mode)
     return q.all()
 
