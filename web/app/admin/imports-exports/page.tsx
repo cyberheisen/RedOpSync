@@ -10,8 +10,9 @@ type ImportExportRecord = {
   project_name: string;
   status: "completed" | "in_progress" | "failed" | "pending";
   created_at: string;
-  file_name: string;
-  user: string;
+  filename: string;
+  created_by: string;
+  error_message?: string | null;
 };
 
 export default function AdminImportsExportsPage() {
@@ -43,6 +44,27 @@ export default function AdminImportsExportsPage() {
     fetch(apiUrl("/api/admin/import-export"), { credentials: "include" })
       .then((r) => (r.ok ? r.json() : []))
       .then((data) => setRecords(Array.isArray(data) ? data : []));
+  };
+
+  const handleDownload = async (jobId: string, filename: string) => {
+    const url = apiUrl(`/api/admin/import-export/${jobId}/download`);
+    try {
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) {
+        setToast("Download failed");
+        return;
+      }
+      const blob = await res.blob();
+      const u = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = u;
+      a.download = filename || "export.zip";
+      a.click();
+      URL.revokeObjectURL(u);
+      setToast("Download started");
+    } catch {
+      setToast("Download failed");
+    }
   };
 
   const filteredRecords = filter === "all" ? records : records.filter((r) => r.type === filter);
@@ -187,18 +209,19 @@ export default function AdminImportsExportsPage() {
               <th style={{ padding: "12px 16px", textAlign: "left", color: "var(--text-muted)", fontWeight: 500 }}>User</th>
               <th style={{ padding: "12px 16px", textAlign: "left", color: "var(--text-muted)", fontWeight: 500 }}>Status</th>
               <th style={{ padding: "12px 16px", textAlign: "left", color: "var(--text-muted)", fontWeight: 500 }}>Time</th>
+              <th style={{ padding: "12px 16px", textAlign: "right", color: "var(--text-muted)", fontWeight: 500 }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={6} style={{ padding: "24px 16px", textAlign: "center", color: "var(--text-muted)" }}>
+                <td colSpan={7} style={{ padding: "24px 16px", textAlign: "center", color: "var(--text-muted)" }}>
                   Loading…
                 </td>
               </tr>
             ) : filteredRecords.length === 0 ? (
               <tr>
-                <td colSpan={6} style={{ padding: "24px 16px", textAlign: "center", color: "var(--text-muted)" }}>
+                <td colSpan={7} style={{ padding: "24px 16px", textAlign: "center", color: "var(--text-muted)" }}>
                   No records found
                 </td>
               </tr>
@@ -222,9 +245,9 @@ export default function AdminImportsExportsPage() {
                   </td>
                   <td style={{ padding: "12px 16px", fontWeight: 500 }}>{record.project_name}</td>
                   <td style={{ padding: "12px 16px", fontFamily: "monospace", fontSize: 12, color: "var(--text-muted)" }}>
-                    {record.file_name}
+                    {record.filename}
                   </td>
-                  <td style={{ padding: "12px 16px" }}>{record.user}</td>
+                  <td style={{ padding: "12px 16px" }}>{record.created_by}</td>
                   <td style={{ padding: "12px 16px" }}>
                     <span
                       style={{
@@ -240,6 +263,18 @@ export default function AdminImportsExportsPage() {
                     </span>
                   </td>
                   <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{formatTimeAgo(record.created_at)}</td>
+                  <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                    {record.type === "export" && record.status === "completed" && (
+                      <button
+                        type="button"
+                        className="theme-btn theme-btn-ghost"
+                        style={{ padding: "4px 10px", fontSize: 12 }}
+                        onClick={() => handleDownload(record.id, record.filename || "export.zip")}
+                      >
+                        Download
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))
             )}

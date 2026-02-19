@@ -94,6 +94,21 @@ export default function AdminMissionsPage() {
     setDeleteTarget(null);
   };
 
+  const handleExportMission = async (mission: Mission) => {
+    try {
+      const url = apiUrl(`/api/admin/import-export/export?project_id=${encodeURIComponent(mission.id)}`);
+      const res = await fetch(url, { method: "POST", credentials: "include" });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setToast("Export started. Go to Imports / Exports to download when ready.");
+      } else {
+        setToast(data.detail ?? "Export failed");
+      }
+    } catch {
+      setToast("Export failed");
+    }
+  };
+
   const handleDeleteBulk = async () => {
     const toDelete = Array.from(selectedIds);
     const failed: string[] = [];
@@ -194,6 +209,14 @@ export default function AdminMissionsPage() {
                   <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{mission.description || "—"}</td>
                   <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{new Date(mission.created_at).toLocaleDateString()}</td>
                   <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                    <button
+                      type="button"
+                      className="theme-btn theme-btn-ghost"
+                      style={{ padding: "4px 10px", fontSize: 12, marginRight: 8 }}
+                      onClick={() => handleExportMission(mission)}
+                    >
+                      Export
+                    </button>
                     <button
                       type="button"
                       className="theme-btn theme-btn-ghost"

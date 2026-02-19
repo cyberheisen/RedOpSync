@@ -6,7 +6,6 @@ import { apiUrl } from "../lib/api";
 import { AddMissionModal } from "../components/add-mission-modal";
 import { ContextMenu } from "../components/context-menu";
 import { DeleteMissionModal } from "../components/delete-mission-modal";
-import { ImportMissionModal } from "../components/import-mission-modal";
 import { RenameMissionModal } from "../components/rename-mission-modal";
 import { SetDatesModal } from "../components/set-dates-modal";
 import { Toast } from "../components/toast";
@@ -50,7 +49,6 @@ export default function MissionsPage() {
   const [createError, setCreateError] = useState("");
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: { label: string; onClick: () => void }[] } | null>(null);
   const [addMissionModal, setAddMissionModal] = useState(false);
-  const [importMissionModal, setImportMissionModal] = useState(false);
   const [renameMissionModal, setRenameMissionModal] = useState<Mission | null>(null);
   const [setDatesModal, setSetDatesModal] = useState<Mission | null>(null);
   const [deleteMissionModal, setDeleteMissionModal] = useState<Mission | null>(null);
@@ -168,23 +166,6 @@ export default function MissionsPage() {
     }
   };
 
-  const handleExport = (mission: Mission) => {
-    const blob = new Blob([`Mock export for ${mission.name}`], { type: "application/zip" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${mission.name.replace(/\s+/g, "-")}.zip`;
-    a.click();
-    URL.revokeObjectURL(url);
-    setToast("Export complete (mock)");
-  };
-
-  const handleImport = async () => {
-    setToast("Import complete (mock)");
-    setImportMissionModal(false);
-    loadMissions();
-  };
-
   if (loading) return <main style={{ padding: 24, color: "var(--text)" }}>Loading missions…</main>;
   if (error)
     return (
@@ -207,14 +188,9 @@ export default function MissionsPage() {
       >
         <h1 style={{ margin: 0, fontSize: "1.5rem" }}>Missions</h1>
         {isAdmin && (
-          <div style={{ display: "flex", gap: 8 }}>
-            <button type="button" onClick={() => setAddMissionModal(true)} className="theme-btn theme-btn-primary">
-              + New mission
-            </button>
-            <button type="button" onClick={() => setImportMissionModal(true)} className="theme-btn theme-btn-ghost">
-              Import mission
-            </button>
-          </div>
+          <button type="button" onClick={() => setAddMissionModal(true)} className="theme-btn theme-btn-primary">
+            + New mission
+          </button>
         )}
       </header>
 
@@ -248,10 +224,9 @@ export default function MissionsPage() {
                     ? [
                         { label: "Rename", onClick: () => setRenameMissionModal(p) },
                         { label: "Set dates (start / end)", onClick: () => setSetDatesModal(p) },
-                        { label: "Export mission", onClick: () => handleExport(p) },
                         { label: "Delete", onClick: () => setDeleteMissionModal(p) },
                       ]
-                    : [{ label: "Export mission", onClick: () => handleExport(p) }]),
+                    : []),
                 ];
                 setContextMenu({ x: e.clientX, y: e.clientY, items });
               }}
@@ -304,10 +279,6 @@ export default function MissionsPage() {
           onClose={() => { setAddMissionModal(false); setCreateError(""); }}
           onSubmit={handleCreate}
         />
-      )}
-
-      {importMissionModal && (
-        <ImportMissionModal onClose={() => setImportMissionModal(false)} onSubmit={handleImport} />
       )}
 
       {renameMissionModal && (

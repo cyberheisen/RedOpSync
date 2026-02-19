@@ -7,6 +7,7 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.admin_deps import require_admin
@@ -14,6 +15,8 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.models import ImportExportJob, Project, User
 from app.services.audit import log_audit
+from app.services.mission_export import build_export_zip
+from app.services.mission_import import run_import_from_zip
 
 router = APIRouter()
 
@@ -119,6 +122,24 @@ async def start_export(
     return {"job_id": str(job.id), "status": "pending"}
 
 
+@router.get("/{job_id}/download")
+def download_export(
+    job_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Download completed export ZIP (admin only)."""
+    job = db.query(ImportExportJob).filter(ImportExportJob.id == job_id).first()
+    if not job or job.type != "export" or job.status != "completed":
+        raise HTTPException(status_code=404, detail="Export not found or not completed")
+    exports_dir = Path(settings.attachments_dir or "/tmp").joinpath("exports")
+    path = exports_dir / f"{job.id}.zip"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Export file no longer available")
+    filename = job.filename or "export.zip"
+    return FileResponse(path, filename=filename, media_type="application/zip")
+
+
 @router.post("/import")
 async def start_import(
     request: Request,
@@ -157,7 +178,7 @@ async def start_import(
 
 
 def _run_export_async(job_id: UUID) -> None:
-    """Run export in background - simplified implementation."""
+    """Run export in background: serialize project(s) to ZIP and persist for download."""
     from app.db.session import SessionLocal
 
     db = SessionLocal()
@@ -167,9 +188,19 @@ def _run_export_async(job_id: UUID) -> None:
             return
         job.status = "in_progress"
         db.commit()
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr("manifest.json", '{"version":1,"projects":[]}')
+
+        if job.project_id:
+            project_ids = [job.project_id]
+        else:
+            project_ids = [p.id for p in db.query(Project).order_by(Project.created_at).all()]
+
+        exports_dir = Path(settings.attachments_dir or "/tmp").joinpath("exports")
+        exports_dir.mkdir(parents=True, exist_ok=True)
+        zip_path = str(exports_dir / f"{job.id}.zip")
+
+        download_filename = build_export_zip(db, project_ids, zip_path)
+        if download_filename:
+            job.filename = download_filename
         job.status = "completed"
         job.completed_at = datetime.now(timezone.utc)
         db.commit()
@@ -185,7 +216,7 @@ def _run_export_async(job_id: UUID) -> None:
 
 
 def _run_import_async(job_id: UUID, path: str) -> None:
-    """Run import in background - simplified implementation."""
+    """Run import in background: parse ZIP and create projects with ID mapping."""
     from app.db.session import SessionLocal
 
     db = SessionLocal()
@@ -195,12 +226,16 @@ def _run_import_async(job_id: UUID, path: str) -> None:
             return
         job.status = "in_progress"
         db.commit()
-        with zipfile.ZipFile(path, "r") as zf:
-            _ = zf.namelist()
+
+        attachments_dir = settings.attachments_dir or "/tmp"
+        run_import_from_zip(db, path, attachments_dir)
+        db.commit()
+
         job.status = "completed"
         job.completed_at = datetime.now(timezone.utc)
         db.commit()
     except Exception as e:
+        db.rollback()
         job = db.query(ImportExportJob).filter(ImportExportJob.id == job_id).first()
         if job:
             job.status = "failed"
