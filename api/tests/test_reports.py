@@ -99,6 +99,14 @@ def test_list_report_configs():
     assert "open_ports" in ids
     assert "vulns_flat" in ids
     assert "evidence" in ids
+    # Canned "not captured" and host-detail reports
+    assert "hosts_not_gowitness" in ids
+    assert "hosts_not_nmap" in ids
+    assert "hosts_not_masscan" in ids
+    assert "hosts_without_whois" in ids
+    assert "host_detail_per_port" in ids
+    assert "technologies_per_host_port" in ids
+    assert "host_identities" in ids
 
 
 def test_run_report_unknown_type():

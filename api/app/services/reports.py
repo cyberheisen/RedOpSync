@@ -10,9 +10,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
+from sqlalchemy import exists
 from sqlalchemy.orm import Session
 
 from app.models.models import Host, Port, Subnet, Evidence, VulnerabilityInstance, VulnerabilityDefinition
+from app.services.gowitness_parser import GOWITNESS_SOURCE
+from app.services.masscan_parser import MASSCAN_SOURCE
+from app.services.nmap_parser import NMAP_SOURCE
 from app.services.report_filter import (
     ParsedFilter,
     entity_matches_filter,
@@ -190,6 +194,112 @@ def _run_unresolved_hosts(db: Session, project_id: UUID, parsed_filters: list[Pa
     return out
 
 
+def _run_hosts_not_gowitness(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
+    """Hosts that have no port with Evidence.source = gowitness."""
+    has_gw = (
+        exists()
+        .select_from(Evidence)
+        .join(Port, Evidence.port_id == Port.id)
+        .where(Port.host_id == Host.id)
+        .where(Evidence.source == GOWITNESS_SOURCE)
+    )
+    q = (
+        db.query(Host, Subnet)
+        .outerjoin(Subnet, Host.subnet_id == Subnet.id)
+        .filter(Host.project_id == project_id)
+        .filter(~has_gw)
+    )
+    out = []
+    for h, s in q.all():
+        if not h.ip or h.ip.lower() == "unresolved":
+            continue
+        if not entity_matches_filters(parsed_filters, "host", h, subnet_cidr=s.cidr if s else None):
+            continue
+        out.append({
+            "ip": h.ip,
+            "dns_name": h.dns_name,
+            "label": f"{h.ip} ({h.dns_name})" if h.dns_name else h.ip,
+        })
+    return sorted(out, key=lambda r: (r["ip"] or "", r["dns_name"] or ""))
+
+
+def _run_hosts_not_nmap(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
+    """Hosts that have no port with discovered_by = nmap."""
+    has_nmap = (
+        exists()
+        .select_from(Port)
+        .where(Port.host_id == Host.id)
+        .where(Port.discovered_by == NMAP_SOURCE)
+    )
+    q = (
+        db.query(Host, Subnet)
+        .outerjoin(Subnet, Host.subnet_id == Subnet.id)
+        .filter(Host.project_id == project_id)
+        .filter(~has_nmap)
+    )
+    out = []
+    for h, s in q.all():
+        if not h.ip or h.ip.lower() == "unresolved":
+            continue
+        if not entity_matches_filters(parsed_filters, "host", h, subnet_cidr=s.cidr if s else None):
+            continue
+        out.append({
+            "ip": h.ip,
+            "dns_name": h.dns_name,
+            "label": f"{h.ip} ({h.dns_name})" if h.dns_name else h.ip,
+        })
+    return sorted(out, key=lambda r: (r["ip"] or "", r["dns_name"] or ""))
+
+
+def _run_hosts_not_masscan(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
+    """Hosts that have no port with discovered_by = masscan."""
+    has_masscan = (
+        exists()
+        .select_from(Port)
+        .where(Port.host_id == Host.id)
+        .where(Port.discovered_by == MASSCAN_SOURCE)
+    )
+    q = (
+        db.query(Host, Subnet)
+        .outerjoin(Subnet, Host.subnet_id == Subnet.id)
+        .filter(Host.project_id == project_id)
+        .filter(~has_masscan)
+    )
+    out = []
+    for h, s in q.all():
+        if not h.ip or h.ip.lower() == "unresolved":
+            continue
+        if not entity_matches_filters(parsed_filters, "host", h, subnet_cidr=s.cidr if s else None):
+            continue
+        out.append({
+            "ip": h.ip,
+            "dns_name": h.dns_name,
+            "label": f"{h.ip} ({h.dns_name})" if h.dns_name else h.ip,
+        })
+    return sorted(out, key=lambda r: (r["ip"] or "", r["dns_name"] or ""))
+
+
+def _run_hosts_without_whois(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
+    """Hosts with no whois_data (enrichment gap)."""
+    q = (
+        db.query(Host, Subnet)
+        .outerjoin(Subnet, Host.subnet_id == Subnet.id)
+        .filter(Host.project_id == project_id, Host.whois_data.is_(None))
+    )
+    out = []
+    for h, s in q.all():
+        if not h.ip or h.ip.lower() == "unresolved":
+            continue
+        if not entity_matches_filters(parsed_filters, "host", h, subnet_cidr=s.cidr if s else None):
+            continue
+        out.append({
+            "ip": h.ip,
+            "dns_name": h.dns_name,
+            "label": f"{h.ip} ({h.dns_name})" if h.dns_name else h.ip,
+        })
+    return sorted(out, key=lambda r: (r["ip"] or "", r["dns_name"] or ""))
+
+
 def _run_vulns_flat(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
     q = (
         db.query(VulnerabilityInstance, VulnerabilityDefinition, Host, Subnet)
@@ -272,6 +382,106 @@ def _run_evidence_entries(db: Session, project_id: UUID, parsed_filters: list[Pa
             "source_timestamp": ev.source_timestamp,
         })
     return out
+
+
+def _run_host_detail_per_port(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
+    """One row per port (or one row per host if no ports), with full host + port columns."""
+    q = (
+        db.query(Host, Subnet, Port)
+        .outerjoin(Subnet, Host.subnet_id == Subnet.id)
+        .outerjoin(Port, Port.host_id == Host.id)
+        .filter(Host.project_id == project_id)
+        .order_by(Host.ip, Port.number.asc().nulls_last(), Port.protocol.asc().nulls_last())
+    )
+    out = []
+    for h, s, p in q.all():
+        if p is not None:
+            if not entity_matches_filters(
+                parsed_filters, "port", p, host=h, port=p, subnet_cidr=s.cidr if s else None
+            ):
+                continue
+        else:
+            if not entity_matches_filters(parsed_filters, "host", h, subnet_cidr=s.cidr if s else None):
+                continue
+        whois = getattr(h, "whois_data", None) if isinstance(getattr(h, "whois_data", None), dict) else {}
+        whois_network = (whois.get("network_name") or whois.get("asn_description")) if whois else None
+        banner = (p.banner[:200] + "…") if (p and p.banner and len(p.banner) > 200) else (p.banner if p else None)
+        out.append({
+            "host_ip": h.ip,
+            "host_dns": h.dns_name,
+            "host_status": h.status or "unknown",
+            "in_scope": h.in_scope if h.in_scope is not None else True,
+            "subnet_cidr": s.cidr if s else None,
+            "subnet_name": s.name if s else None,
+            "whois_network": whois_network,
+            "port_number": p.number if p else None,
+            "port_protocol": p.protocol.value if p and hasattr(p.protocol, "value") else (str(p.protocol) if p else None),
+            "port_state": p.state if p else None,
+            "service": p.service_name if p else None,
+            "service_version": p.service_version if p else None,
+            "discovered_by": p.discovered_by if p else None,
+            "scanned_at": p.scanned_at.isoformat() if p and p.scanned_at else None,
+            "banner": banner,
+        })
+    return out
+
+
+def _run_technologies_per_host_port(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
+    """One row per (host, port, technology) from Evidence captions like 'Technologies: A, B, C [gowitness]'."""
+    q = (
+        db.query(Evidence, Host, Port, Subnet)
+        .outerjoin(Host, Evidence.host_id == Host.id)
+        .outerjoin(Port, Evidence.port_id == Port.id)
+        .outerjoin(Subnet, Host.subnet_id == Subnet.id)
+        .filter(Evidence.project_id == project_id)
+    )
+    out = []
+    for ev, h, p, s in q.all():
+        if not ev.caption or "Technologies:" not in ev.caption:
+            continue
+        if h is not None and not entity_matches_filters(
+            parsed_filters, "evidence", ev, host=h, subnet_cidr=s.cidr if s else None
+        ):
+            continue
+        # Parse "Technologies: X, Y, Z [source]" -> ["X", "Y", "Z"]
+        prefix = "Technologies: "
+        idx = ev.caption.find(prefix)
+        if idx == -1:
+            continue
+        rest = ev.caption[idx + len(prefix) :].strip()
+        # Remove trailing [gowitness] or similar
+        bracket = rest.find(" [")
+        if bracket != -1:
+            rest = rest[:bracket].strip()
+        techs = [t.strip() for t in rest.split(",") if t.strip()]
+        for tech in techs:
+            out.append({
+                "host_ip": h.ip if h else None,
+                "host_dns": h.dns_name if h else None,
+                "port_number": p.number if p else None,
+                "port_protocol": p.protocol.value if p and hasattr(p.protocol, "value") else (str(p.protocol) if p else None),
+                "technology": tech,
+                "source": ev.source or "manual",
+            })
+    return sorted(out, key=lambda r: (r["host_ip"] or "", r["port_number"] or 0, r["technology"]))
+
+
+def _run_host_identities(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
+    """One row per identity (ip or hostname) per host: two rows when host has both ip and hostname."""
+    q = (
+        db.query(Host, Subnet)
+        .outerjoin(Subnet, Host.subnet_id == Subnet.id)
+        .filter(Host.project_id == project_id)
+    )
+    out = []
+    for h, s in q.all():
+        if not entity_matches_filters(parsed_filters, "host", h, subnet_cidr=s.cidr if s else None):
+            continue
+        if h.ip and h.ip.lower() != "unresolved":
+            out.append({"identity_type": "ip", "value": h.ip, "host_id": str(h.id)})
+        if h.dns_name and (h.dns_name or "").strip():
+            out.append({"identity_type": "hostname", "value": (h.dns_name or "").strip(), "host_id": str(h.id)})
+    return sorted(out, key=lambda r: (r["identity_type"], r["value"]))
 
 
 BUILDER_COLUMNS: dict[str, list[tuple[str, str]]] = {
@@ -457,6 +667,13 @@ REPORT_REGISTRY: dict[str, tuple[ReportConfig, callable]] = {
     "open_ports": (ReportConfig("open_ports", "List of all open ports"), _run_open_ports),
     "hosts_by_subnet": (ReportConfig("hosts_by_subnet", "List of hosts by subnet"), _run_hosts_by_subnet),
     "unresolved_hosts": (ReportConfig("unresolved_hosts", "List of unresolved hosts"), _run_unresolved_hosts),
+    "hosts_not_gowitness": (ReportConfig("hosts_not_gowitness", "Hosts not captured by GoWitness"), _run_hosts_not_gowitness),
+    "hosts_not_nmap": (ReportConfig("hosts_not_nmap", "Hosts not scanned by Nmap"), _run_hosts_not_nmap),
+    "hosts_not_masscan": (ReportConfig("hosts_not_masscan", "Hosts not scanned by Masscan"), _run_hosts_not_masscan),
+    "hosts_without_whois": (ReportConfig("hosts_without_whois", "Hosts without whois data"), _run_hosts_without_whois),
+    "host_detail_per_port": (ReportConfig("host_detail_per_port", "Host detail (one row per port)"), _run_host_detail_per_port),
+    "technologies_per_host_port": (ReportConfig("technologies_per_host_port", "Technologies by host and port (one row per technology)"), _run_technologies_per_host_port),
+    "host_identities": (ReportConfig("host_identities", "Host identities (IP and hostname)"), _run_host_identities),
     "vulns_flat": (ReportConfig("vulns_flat", "List of vulnerabilities (flat)"), _run_vulns_flat),
     "vulns_by_severity": (ReportConfig("vulns_by_severity", "List of vulnerabilities by severity"), _run_vulns_by_severity),
     "evidence": (ReportConfig("evidence", "List of evidence entries (source + type)"), _run_evidence_entries),
