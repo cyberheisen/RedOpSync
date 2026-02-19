@@ -1251,6 +1251,16 @@ export default function MissionDetailPage() {
     [hosts, subnets]
   );
 
+  /** In-scope resolved host count (hosts under subnets + unassigned), used for Resolved node label. */
+  const inScopeResolvedHostCount = useMemo(
+    () =>
+      inScopeSubnets.reduce(
+        (n, s) => n + (hostsBySubnet[s.id] ?? []).filter((h) => h.in_scope !== false).length,
+        0
+      ) + (hostsBySubnet["_unassigned"] ?? []).filter((h) => h.in_scope !== false).length,
+    [inScopeSubnets, hostsBySubnet]
+  );
+
   const getDescendantKeys = useCallback((key: string): Set<string> => {
     const out = new Set<string>([key]);
     if (key === "scope") {
@@ -4064,7 +4074,7 @@ export default function MissionDetailPage() {
                 >
                   <span style={{ width: 14 }}>{expanded.has("resolved") ? "▼" : "▶"}</span>
                   Resolved
-                  <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({inScopeSubnets.length + (hostsBySubnet["_unassigned"] ?? []).filter((h) => h.in_scope !== false).length})</span>
+                  <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({inScopeResolvedHostCount})</span>
                 </div>
                 {expanded.has("resolved") && (
                   <>

@@ -503,10 +503,10 @@ export function CustomReportsPanel({ projectId, subnets, onToast, savedReports =
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
                 <input
                   type="checkbox"
-                  checked={filters.exclude_unresolved}
-                  onChange={(e) => setFilters((f) => ({ ...f, exclude_unresolved: e.target.checked }))}
+                  checked={!filters.exclude_unresolved}
+                  onChange={(e) => setFilters((f) => ({ ...f, exclude_unresolved: !e.target.checked }))}
                 />
-                Exclude unresolved
+                Include unresolved
               </label>
             )}
             {showStatusFilter && (

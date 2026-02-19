@@ -22,6 +22,13 @@ def test_report_filters_to_expression_defaults():
     assert len(clauses) == 1
 
 
+def test_report_filters_to_expression_include_unresolved():
+    """When exclude_unresolved=False, no unresolved clause is added so hostnames report includes unresolved."""
+    f = ReportFilters(exclude_unresolved=False)
+    clauses = report_filters_to_expression(f)
+    assert "unresolved == false" not in clauses
+
+
 def test_report_filters_to_expression_status():
     f = ReportFilters(exclude_unresolved=True, status="online")
     clauses = report_filters_to_expression(f)

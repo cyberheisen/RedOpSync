@@ -90,13 +90,16 @@ def parse_text_hosts(content: bytes, filename: str) -> tuple[list[TextHost], lis
     return hosts, errors
 
 
+UNRESOLVED_IP = "unresolved"
+
+
 def _find_or_create_host(
     db: Session,
     project_id: UUID,
     th: TextHost,
     source_file: str,
 ) -> tuple[Host, bool]:
-    """Find or create host. Match by (project_id, ip, dns_name) so same IP with different hostname creates a new host. Returns (host, created)."""
+    """Find or create host. Match by (project_id, ip, dns_name). If no match and hostname given, match existing unresolved host by hostname and update to resolved. Returns (host, created)."""
     ip = th.ip
     dns = th.hostname
     dns_norm = (dns or "").strip() or None
@@ -107,10 +110,27 @@ def _find_or_create_host(
     else:
         existing = q.filter(or_(Host.dns_name.is_(None), Host.dns_name == "")).first()
 
+    if existing is None and dns_norm:
+        existing = (
+            db.query(Host)
+            .filter(
+                Host.project_id == project_id,
+                Host.ip == UNRESOLVED_IP,
+                Host.dns_name == dns_norm,
+            )
+            .first()
+        )
+
     if existing:
         need_update = False
         if dns and (not existing.dns_name or existing.dns_name != dns):
             existing.dns_name = dns
+            need_update = True
+        if existing.ip == UNRESOLVED_IP:
+            existing.ip = ip
+            new_subnet = find_or_create_subnet_for_ip(db, project_id, ip)
+            if new_subnet:
+                existing.subnet_id = new_subnet
             need_update = True
         if need_update:
             db.commit()
