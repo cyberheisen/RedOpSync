@@ -1,13 +1,16 @@
+import os
+from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.admin_deps import require_admin
+from app.core.config import settings
 from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.models.models import AuditEvent, ItemTag, Lock, Project, SavedReport, Tag, User
-from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectSortModeUpdate
+from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectSortModeUpdate, ImportFromPathBody
 from app.schemas.tag import TagCreate, TagRead, ItemTagCreate, ItemTagRead
 from app.schemas.report import (
     ReportRunRequest,
@@ -20,7 +23,7 @@ from app.schemas.report import (
     SavedReportQueryDefinition,
 )
 from app.services.audit import log_audit
-from app.services.import_dispatcher import run_import
+from app.services.import_dispatcher import run_import, run_gowitness_import_from_path
 from app.services.reports import run_report, list_report_configs, run_builder, BUILDER_COLUMNS, _builder_columns_json, ReportFilters
 
 router = APIRouter()
@@ -316,6 +319,70 @@ async def import_scan(
             formats_used.append("unknown")
 
     return _aggregate_import_results(results, formats_used)
+
+
+@router.post("/{project_id}/import-from-path")
+def import_from_path(
+    project_id: UUID,
+    request: Request,
+    body: ImportFromPathBody = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Import from a file or directory on the server. Path is relative to the import directory.
+    Supports all formats: Nmap XML, GoWitness (zip or directory), text, Masscan list, Whois JSON.
+    Default import directory: {ATTACHMENTS_DIR}/imports (override with IMPORT_FROM_PATH_DIR).
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    path_str = (body.path or "").strip()
+    if not path_str:
+        raise HTTPException(status_code=400, detail="Path is required")
+
+    base = Path(settings.import_from_path_dir or os.path.join(settings.attachments_dir, "imports")).resolve()
+    base.mkdir(parents=True, exist_ok=True)
+    full = (base / path_str.lstrip("/")).resolve()
+    try:
+        if os.path.commonpath([base, full]) != str(base):
+            raise HTTPException(status_code=400, detail="Path must be under the import directory.")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Path must be under the import directory.")
+
+    if not full.exists():
+        raise HTTPException(status_code=404, detail="File or directory not found")
+
+    request_ip = _get_client_ip(request)
+
+    if full.is_file():
+        if not any(full.name.lower().endswith(ext) for ext in ALLOWED_IMPORT_EXTENSIONS):
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported file type. Use .xml, .zip, .txt, .json, .masscan, or .lst",
+            )
+        try:
+            content = full.read_bytes()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to read file: {e}")
+        if len(content) == 0:
+            raise HTTPException(status_code=400, detail="File is empty")
+        try:
+            result = run_import(db, project_id, content, full.name, current_user.id, request_ip)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return result
+
+    if full.is_dir():
+        try:
+            return run_gowitness_import_from_path(
+                db, project_id, full, current_user.id, request_ip
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    raise HTTPException(status_code=400, detail="Path must be a file or a directory.")
 
 
 @router.get("/{project_id}/reports/builder/columns")

@@ -279,3 +279,65 @@ def run_import(
         }
 
     raise ValueError(err or "Unsupported file format.")
+
+
+def run_gowitness_import_from_path(
+    db: Session,
+    project_id: UUID,
+    path: Path,
+    user_id: UUID,
+    request_ip: str | None = None,
+) -> dict:
+    """
+    Run GoWitness import from a directory or a .zip file path.
+    path must be an existing directory or a .zip file.
+    Returns the same dict shape as the gowitness branch in run_import.
+    """
+    import tempfile
+
+    if path.is_file() and path.suffix.lower() == ".zip":
+        with tempfile.TemporaryDirectory(prefix="gowitness_") as tmpdir:
+            root = Path(tmpdir)
+            with zipfile.ZipFile(path, "r") as zf:
+                zf.extractall(root)
+            return _run_gowitness_from_root(db, project_id, root, user_id, request_ip)
+    if path.is_dir():
+        return _run_gowitness_from_root(db, project_id, path, user_id, request_ip)
+    raise ValueError("Path must be a .zip file or a directory.")
+
+
+def _run_gowitness_from_root(
+    db: Session,
+    project_id: UUID,
+    root: Path,
+    user_id: UUID,
+    request_ip: str | None,
+) -> dict:
+    """Run gowitness import on an existing directory; return result dict."""
+    parse_result = parse_gowitness_directory(root)
+    if not parse_result.records and parse_result.errors:
+        raise ValueError(
+            parse_result.errors[0]
+            if len(parse_result.errors) == 1
+            else "; ".join(parse_result.errors[:3])
+        )
+    if not parse_result.records:
+        return {
+            "format": "gowitness",
+            "hosts_created": 0,
+            "ports_created": 0,
+            "screenshots_imported": 0,
+            "metadata_records_imported": 0,
+            "errors": parse_result.errors,
+            "skipped": 0,
+        }
+    summary = _run_gowitness(db, project_id, root, user_id, request_ip)
+    return {
+        "format": "gowitness",
+        "hosts_created": summary.hosts_created,
+        "ports_created": summary.ports_created,
+        "screenshots_imported": summary.screenshots_imported,
+        "metadata_records_imported": summary.metadata_records_imported,
+        "errors": summary.errors,
+        "skipped": summary.skipped,
+    }

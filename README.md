@@ -125,6 +125,8 @@ Imports are sent as multipart uploads. For large files (e.g. ~130MB GoWitness ZI
   See [deploy/nginx-import.conf.example](deploy/nginx-import.conf.example) for a snippet.
 - **Uvicorn only**: The API does not enforce a body limit. If the connection drops, increase the server keep-alive (e.g. `uvicorn ... --timeout-keep-alive 300`).
 
+**Import from server path:** For very large files (any supported format), you can avoid HTTP upload by placing the file or directory on the server and importing by path. Copy the file (e.g. `gowitness.zip`, `scan.xml`, `hosts.txt`) or an extracted GoWitness directory into the server’s import directory, then in the mission use **Import** → **Import from server path** and enter the relative path (e.g. `gowitness.zip`). Or call the API: `POST /api/projects/{id}/import-from-path` with body `{"path": "filename.zip"}`. The default import directory is `{ATTACHMENTS_DIR}/imports` (override with `IMPORT_FROM_PATH_DIR`). Supports Nmap XML, GoWitness (zip or directory), plain text, Masscan list, and Whois JSON.
+
 ---
 
 ## Running without Docker (local dev)

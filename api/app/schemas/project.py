@@ -31,6 +31,10 @@ class ProjectUpdate(BaseModel):
     sort_mode: str | None = Field(None, pattern="^(cidr_asc|cidr_desc|alpha_asc|alpha_desc|last_seen_desc)$")
 
 
+class ImportFromPathBody(BaseModel):
+    path: str = Field(..., min_length=1, max_length=2048)
+
+
 class ProjectRead(BaseModel):
     id: UUID
     name: str

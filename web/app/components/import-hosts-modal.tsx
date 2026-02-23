@@ -30,8 +30,12 @@ type ImportResult = {
   files_processed?: number;
 };
 
+type ImportMode = "upload" | "path";
+
 export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Props) {
+  const [mode, setMode] = useState<ImportMode>("upload");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [pathInput, setPathInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +59,41 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
   };
 
   const handleImport = async () => {
+    if (mode === "path") {
+      const path = pathInput.trim();
+      if (!path) return;
+      setLoading(true);
+      setError(null);
+      setResult(null);
+      try {
+        const res = await fetch(apiUrl(`/api/projects/${projectId}/import-from-path`), {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setError(typeof data.detail === "string" ? data.detail : `Import failed (${res.status})`);
+          return;
+        }
+        setResult(data);
+        const hasData =
+          (data.hosts_created ?? 0) > 0 ||
+          (data.hosts_updated ?? 0) > 0 ||
+          (data.subnets_updated ?? 0) > 0 ||
+          (data.ports_created ?? 0) > 0 ||
+          (data.ports_updated ?? 0) > 0 ||
+          (data.screenshots_imported ?? 0) > 0 ||
+          (data.metadata_records_imported ?? 0) > 0;
+        if (hasData) onSuccess();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Import failed");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     if (selectedFiles.length === 0) return;
     setLoading(true);
     setError(null);
@@ -93,6 +132,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
 
   const handleReset = () => {
     setSelectedFiles([]);
+    setPathInput("");
     setResult(null);
     setError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -137,46 +177,80 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
 
         {!result ? (
           <>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xml,.zip,.txt,.json,.masscan,.lst"
-              multiple
-              onChange={handleFileChange}
-              style={{ display: "none" }}
-            />
-            <div
-              style={{
-                padding: 16,
-                border: "1px dashed var(--border)",
-                borderRadius: 8,
-                marginBottom: 16,
-                textAlign: "center",
-                cursor: "pointer",
-              }}
-              onClick={handleFileClick}
-            >
-              {selectedFiles.length === 0
-                ? "Choose file(s)"
-                : selectedFiles.length === 1
-                  ? selectedFiles[0].name
-                  : `${selectedFiles.length} files selected`}
-            </div>
-            {selectedFiles.length > 1 && (
-              <ul
-                style={{
-                  margin: "0 0 16px",
-                  paddingLeft: 20,
-                  fontSize: 13,
-                  color: "var(--text-muted)",
-                  maxHeight: 120,
-                  overflowY: "auto",
-                }}
+            <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+              <button
+                type="button"
+                className={mode === "upload" ? "theme-btn theme-btn-primary" : "theme-btn theme-btn-ghost"}
+                onClick={() => { setMode("upload"); setError(null); }}
               >
-                {selectedFiles.map((f, i) => (
-                  <li key={i}>{f.name}</li>
-                ))}
-              </ul>
+                Upload file(s)
+              </button>
+              <button
+                type="button"
+                className={mode === "path" ? "theme-btn theme-btn-primary" : "theme-btn theme-btn-ghost"}
+                onClick={() => { setMode("path"); setError(null); }}
+              >
+                Import from server path
+              </button>
+            </div>
+            {mode === "upload" ? (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".xml,.zip,.txt,.json,.masscan,.lst"
+                  multiple
+                  onChange={handleFileChange}
+                  style={{ display: "none" }}
+                />
+                <div
+                  style={{
+                    padding: 16,
+                    border: "1px dashed var(--border)",
+                    borderRadius: 8,
+                    marginBottom: 16,
+                    textAlign: "center",
+                    cursor: "pointer",
+                  }}
+                  onClick={handleFileClick}
+                >
+                  {selectedFiles.length === 0
+                    ? "Choose file(s)"
+                    : selectedFiles.length === 1
+                      ? selectedFiles[0].name
+                      : `${selectedFiles.length} files selected`}
+                </div>
+                {selectedFiles.length > 1 && (
+                  <ul
+                    style={{
+                      margin: "0 0 16px",
+                      paddingLeft: 20,
+                      fontSize: 13,
+                      color: "var(--text-muted)",
+                      maxHeight: 120,
+                      overflowY: "auto",
+                    }}
+                  >
+                    {selectedFiles.map((f, i) => (
+                      <li key={i}>{f.name}</li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            ) : (
+              <>
+                <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--text-muted)" }}>
+                  Relative path under the server import directory (e.g. <code style={{ fontSize: 12 }}>gowitness.zip</code> or <code style={{ fontSize: 12 }}>scan.xml</code>). Supports all formats: Nmap, GoWitness, text, Masscan, Whois.
+                </p>
+                <input
+                  type="text"
+                  className="theme-input"
+                  placeholder="e.g. gowitness.zip"
+                  value={pathInput}
+                  onChange={(e) => { setPathInput(e.target.value); setError(null); }}
+                  style={{ marginBottom: 16 }}
+                />
+              </>
             )}
             {error && (
               <p style={{ margin: "0 0 12px", color: "var(--error)", fontSize: 14 }}>{error}</p>
@@ -189,7 +263,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
                 type="button"
                 className="theme-btn theme-btn-primary"
                 onClick={handleImport}
-                disabled={selectedFiles.length === 0 || loading}
+                disabled={(mode === "upload" && selectedFiles.length === 0) || (mode === "path" && !pathInput.trim()) || loading}
               >
                 {loading ? "Importing…" : "Import"}
               </button>
