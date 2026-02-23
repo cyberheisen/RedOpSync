@@ -127,6 +127,21 @@ Imports are sent as multipart uploads. For large files (e.g. ~130MB GoWitness ZI
 
 **Import from server path:** For very large files (any supported format), you can avoid HTTP upload by placing the file or directory on the server and importing by path. Copy the file (e.g. `gowitness.zip`, `scan.xml`, `hosts.txt`) or an extracted GoWitness directory into the server’s import directory, then in the mission use **Import** → **Import from server path** and enter the relative path (e.g. `gowitness.zip`). Or call the API: `POST /api/projects/{id}/import-from-path` with body `{"path": "filename.zip"}`. The default import directory is `/tmp` (override with `IMPORT_FROM_PATH_DIR`). Supports Nmap XML, GoWitness (zip or directory), plain text, Masscan list, and Whois JSON.
 
+When you use the **Import from server path** tab and choose a file from your computer, the file is uploaded and the import runs in the background; the UI polls for status. If you see "Import job not found or expired" or the screen returns to the upload form with no result, check the API logs (see below).
+
+**Checking import job logs:** The API logs import job lifecycle to stdout.
+
+- **Docker:** Run `docker compose logs api` (or `docker compose logs -f api` to follow). Look for:
+  - `Import job created job_id=... backend=redis` or `backend=memory` — job created after upload.
+  - `Import upload accepted job_id=... returning 202` — upload returned 202; client should poll.
+  - `Import job started job_id=... filename=...` — background import started.
+  - `Import job completed job_id=... format=... hosts_created=...` — import finished successfully.
+  - `Import job failed job_id=...` — import raised an exception (traceback is logged).
+  - `Import job get job_id=... not_found` or `Import job poll 404` — a poll could not find the job (e.g. different API worker when Redis is not used, or job expired).
+- **Local uvicorn:** The same messages appear in the terminal where you run `uvicorn main:app ...`.
+
+If you see `backend=memory` and later `not_found` when polling, the poll likely hit a different process; ensure **Redis** is running and reachable so all workers share job state. If you see `Import job completed` but the UI never showed the result, check the browser **Network** tab for `GET .../import-jobs/{job_id}` (200 vs 404) and the **Console** for errors.
+
 ---
 
 ## Running without Docker (local dev)

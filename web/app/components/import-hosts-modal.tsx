@@ -418,7 +418,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
                     ? `Uploading... ${uploadProgress}%`
                     : importProgress
                       ? `Processing import... ${importProgress.current} of ${importProgress.total}`
-                      : "Processing import..."}
+                      : "Processing import... (this may take a while for large files)"}
                 </p>
                 <div
                   style={{

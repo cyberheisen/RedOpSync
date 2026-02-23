@@ -1,5 +1,6 @@
 import csv
 import io
+import logging
 import os
 import threading
 from datetime import datetime, timezone
@@ -43,6 +44,7 @@ from app.services.import_dispatcher import run_import, run_gowitness_import_from
 from app.services.import_job_store import create_job, get_job, set_failed, set_progress, set_result
 from app.services.reports import run_report, list_report_configs, run_builder, BUILDER_COLUMNS, _builder_columns_json, ReportFilters
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -361,6 +363,7 @@ def _run_import_job(
     request_ip: str | None,
 ) -> None:
     """Background thread: run import and update job store."""
+    logger.info("Import job started job_id=%s project_id=%s filename=%s", job_id, project_id, filename)
     db = SessionLocal()
     try:
         def progress_cb(current: int, total: int) -> None:
@@ -376,7 +379,16 @@ def _run_import_job(
             progress_callback=progress_cb,
         )
         set_result(job_id, result)
+        logger.info(
+            "Import job completed job_id=%s format=%s hosts_created=%s ports_created=%s screenshots_imported=%s",
+            job_id,
+            result.get("format"),
+            result.get("hosts_created", 0),
+            result.get("ports_created", 0),
+            result.get("screenshots_imported", 0),
+        )
     except Exception as e:
+        logger.exception("Import job failed job_id=%s: %s", job_id, e)
         set_failed(job_id, str(e))
     finally:
         db.close()
@@ -430,6 +442,7 @@ async def import_from_path_upload(
         args=(job_id, project_id, content, safe_name, current_user.id, request_ip),
     )
     thread.start()
+    logger.info("Import upload accepted job_id=%s project_id=%s filename=%s returning 202", job_id, project_id, safe_name)
     return JSONResponse(
         status_code=202,
         content={"job_id": job_id},
@@ -449,6 +462,7 @@ def get_import_job(
         raise HTTPException(status_code=404, detail="Project not found")
     job = get_job(job_id, project_id)
     if not job:
+        logger.info("Import job poll 404 job_id=%s project_id=%s", job_id, project_id)
         raise HTTPException(status_code=404, detail="Job not found")
     return job
 

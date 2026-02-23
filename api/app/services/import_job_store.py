@@ -62,11 +62,13 @@ def create_job(project_id: UUID) -> str:
     if r is not None:
         try:
             r.set(_key(job_id), json.dumps(job), ex=JOB_TTL_SECONDS)
+            logger.info("Import job created job_id=%s project_id=%s backend=redis", job_id, project_id)
             return job_id
         except Exception as e:
             logger.warning("Redis set failed, using in-memory: %s", e)
     with _memory_lock:
         _memory_store[job_id] = job
+    logger.info("Import job created job_id=%s project_id=%s backend=memory", job_id, project_id)
     return job_id
 
 
@@ -77,6 +79,7 @@ def get_job(job_id: str, project_id: UUID) -> dict | None:
         try:
             raw = r.get(_key(job_id))
             if raw is None:
+                logger.info("Import job get job_id=%s project_id=%s backend=redis not_found", job_id, project_id)
                 return None
             job = json.loads(raw)
             if job.get("project_id") != str(project_id):
@@ -87,6 +90,8 @@ def get_job(job_id: str, project_id: UUID) -> dict | None:
     with _memory_lock:
         job = _memory_store.get(job_id)
         if not job or job["project_id"] != str(project_id):
+            if not job:
+                logger.info("Import job get job_id=%s project_id=%s backend=memory not_found", job_id, project_id)
             return None
         return dict(job)
 
