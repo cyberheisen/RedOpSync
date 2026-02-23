@@ -3,6 +3,7 @@ import io
 import logging
 import os
 import threading
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
@@ -357,27 +358,77 @@ def _resolve_import_path(path_str: str) -> tuple[Path, Path]:
 def _run_import_job(
     job_id: str,
     project_id: UUID,
-    content: bytes,
+    file_path: str,
     filename: str,
     user_id: UUID,
     request_ip: str | None,
 ) -> None:
-    """Background thread: run import and update job store."""
+    """Background thread: run import from file on disk. For .zip avoids loading entire archive into memory."""
     logger.info("Import job started job_id=%s project_id=%s filename=%s", job_id, project_id, filename)
     db = SessionLocal()
     try:
+        path = Path(file_path)
+        if not path.is_file():
+            set_failed(job_id, f"File not found: {file_path}")
+            return
+
         def progress_cb(current: int, total: int) -> None:
             set_progress(job_id, current, total)
 
-        result = run_import(
-            db,
-            project_id,
-            content,
-            filename,
-            user_id,
-            request_ip,
-            progress_callback=progress_cb,
-        )
+        if path.suffix.lower() == ".zip":
+            with zipfile.ZipFile(path, "r") as zf:
+                names = zf.namelist()
+            has_image = any(
+                n.lower().endswith(ext) for n in names for ext in (".png", ".jpg", ".jpeg")
+            )
+            has_jsonl = any(n.lower().endswith(".jsonl") for n in names)
+            has_xml = any(
+                n.lower().endswith(".xml") and not n.startswith("__") for n in names
+            )
+            if has_image or has_jsonl:
+                result = run_gowitness_import_from_path(
+                    db, project_id, path, user_id, request_ip, progress_callback=progress_cb
+                )
+            elif has_xml:
+                with zipfile.ZipFile(path, "r") as zf:
+                    for n in zf.namelist():
+                        if n.lower().endswith(".xml") and not n.startswith("__"):
+                            xml_content = zf.read(n)
+                            result = run_import(
+                                db,
+                                project_id,
+                                xml_content,
+                                n,
+                                user_id,
+                                request_ip,
+                                progress_callback=progress_cb,
+                            )
+                            break
+                    else:
+                        set_failed(job_id, "ZIP contains no recognized Nmap XML file.")
+                        return
+            else:
+                content = path.read_bytes()
+                result = run_import(
+                    db,
+                    project_id,
+                    content,
+                    filename,
+                    user_id,
+                    request_ip,
+                    progress_callback=progress_cb,
+                )
+        else:
+            content = path.read_bytes()
+            result = run_import(
+                db,
+                project_id,
+                content,
+                filename,
+                user_id,
+                request_ip,
+                progress_callback=progress_cb,
+            )
         set_result(job_id, result)
         logger.info(
             "Import job completed job_id=%s format=%s hosts_created=%s ports_created=%s screenshots_imported=%s",
@@ -437,9 +488,10 @@ async def import_from_path_upload(
 
     job_id = create_job(project_id)
     request_ip = _get_client_ip(request)
+    # Pass file path so the thread reads from disk; avoids holding full upload in request + thread (OOM on small systems).
     thread = threading.Thread(
         target=_run_import_job,
-        args=(job_id, project_id, content, safe_name, current_user.id, request_ip),
+        args=(job_id, project_id, str(dest), safe_name, current_user.id, request_ip),
     )
     thread.start()
     logger.info("Import upload accepted job_id=%s project_id=%s filename=%s returning 202", job_id, project_id, safe_name)
