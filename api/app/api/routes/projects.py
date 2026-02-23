@@ -1,8 +1,10 @@
 import os
+import threading
 from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.admin_deps import require_admin
@@ -23,7 +25,9 @@ from app.schemas.report import (
     SavedReportQueryDefinition,
 )
 from app.services.audit import log_audit
+from app.db.session import SessionLocal
 from app.services.import_dispatcher import run_import, run_gowitness_import_from_path
+from app.services.import_job_store import create_job, get_job, set_failed, set_progress, set_result
 from app.services.reports import run_report, list_report_configs, run_builder, BUILDER_COLUMNS, _builder_columns_json, ReportFilters
 
 router = APIRouter()
@@ -335,6 +339,36 @@ def _resolve_import_path(path_str: str) -> tuple[Path, Path]:
     return base, full
 
 
+def _run_import_job(
+    job_id: str,
+    project_id: UUID,
+    content: bytes,
+    filename: str,
+    user_id: UUID,
+    request_ip: str | None,
+) -> None:
+    """Background thread: run import and update job store."""
+    db = SessionLocal()
+    try:
+        def progress_cb(current: int, total: int) -> None:
+            set_progress(job_id, current, total)
+
+        result = run_import(
+            db,
+            project_id,
+            content,
+            filename,
+            user_id,
+            request_ip,
+            progress_callback=progress_cb,
+        )
+        set_result(job_id, result)
+    except Exception as e:
+        set_failed(job_id, str(e))
+    finally:
+        db.close()
+
+
 @router.post("/{project_id}/import-from-path/upload")
 async def import_from_path_upload(
     project_id: UUID,
@@ -344,8 +378,9 @@ async def import_from_path_upload(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Upload a file to the server's import directory then import it (same as picking a file via browse).
-    Use this for large files: upload saves to disk first, then imports from path. Same supported formats as regular import.
+    Upload a file to the server's import directory then run import in the background.
+    Returns 202 with job_id; poll GET /import-jobs/{job_id} for status and progress.
+    Same supported formats as regular import. Use for large files to avoid timeouts.
     """
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
@@ -374,16 +409,35 @@ async def import_from_path_upload(
         dest.write_bytes(content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save file on server: {e}")
+
+    job_id = create_job(project_id)
     request_ip = _get_client_ip(request)
-    try:
-        result = run_import(db, project_id, content, safe_name, current_user.id, request_ip)
-    except ValueError as e:
-        try:
-            dest.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise HTTPException(status_code=400, detail=str(e))
-    return result
+    thread = threading.Thread(
+        target=_run_import_job,
+        args=(job_id, project_id, content, safe_name, current_user.id, request_ip),
+    )
+    thread.start()
+    return JSONResponse(
+        status_code=202,
+        content={"job_id": job_id},
+    )
+
+
+@router.get("/{project_id}/import-jobs/{job_id}")
+def get_import_job(
+    project_id: UUID,
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get status and progress of an async import job. Poll until status is completed or failed."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    job = get_job(job_id, project_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 
 @router.post("/{project_id}/import-from-path")

@@ -286,9 +286,13 @@ class SavedReport(Base):
     data_source = Column(String(64), nullable=False)
     columns = Column(JSONB, nullable=False)
     filter_expression = Column(Text, nullable=True)
+    definition_json = Column(JSONB, nullable=True)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=True, onupdate=datetime.utcnow)
 
     project = relationship("Project", back_populates="saved_reports")
+    created_by = relationship("User", backref="saved_reports")
 
 
 class Tag(Base):

@@ -8,6 +8,7 @@ import shutil
 import uuid as uuid_mod
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 from uuid import UUID
 
 from sqlalchemy import or_
@@ -217,6 +218,7 @@ def run_gowitness_import(
     root_path: Path,
     user_id: UUID,
     request_ip: str | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> ImportSummary:
     """
     Run GoWitness import for a mission.
@@ -258,7 +260,8 @@ def run_gowitness_import(
     if not result.records:
         return summary
 
-    for rec in result.records:
+    total = len(result.records)
+    for idx, rec in enumerate(result.records):
         try:
             parsed = rec.parsed
             if not parsed:
@@ -444,6 +447,9 @@ def run_gowitness_import(
 
         except Exception as e:
             summary.errors.append(f"Record error: {e}")
+
+        if progress_callback is not None:
+            progress_callback(idx + 1, total)
 
     log_audit(
         db,

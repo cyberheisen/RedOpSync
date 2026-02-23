@@ -10,6 +10,7 @@ Supported formats:
 from __future__ import annotations
 
 import io
+from typing import Callable
 import json
 import zipfile
 from pathlib import Path
@@ -137,6 +138,7 @@ def run_import(
     filename: str,
     user_id: UUID,
     request_ip: str | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict:
     """
     Detect format and run the appropriate importer. Returns unified summary dict.
@@ -209,7 +211,9 @@ def run_import(
                     "errors": parse_result.errors,
                     "skipped": 0,
                 }
-            summary = _run_gowitness(db, project_id, root, user_id, request_ip)
+            summary = _run_gowitness(
+                db, project_id, root, user_id, request_ip, progress_callback=progress_callback
+            )
         return {
             "format": "gowitness",
             "hosts_created": summary.hosts_created,
@@ -287,6 +291,7 @@ def run_gowitness_import_from_path(
     path: Path,
     user_id: UUID,
     request_ip: str | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict:
     """
     Run GoWitness import from a directory or a .zip file path.
@@ -300,9 +305,13 @@ def run_gowitness_import_from_path(
             root = Path(tmpdir)
             with zipfile.ZipFile(path, "r") as zf:
                 zf.extractall(root)
-            return _run_gowitness_from_root(db, project_id, root, user_id, request_ip)
+            return _run_gowitness_from_root(
+                db, project_id, root, user_id, request_ip, progress_callback=progress_callback
+            )
     if path.is_dir():
-        return _run_gowitness_from_root(db, project_id, path, user_id, request_ip)
+        return _run_gowitness_from_root(
+            db, project_id, path, user_id, request_ip, progress_callback=progress_callback
+        )
     raise ValueError("Path must be a .zip file or a directory.")
 
 
@@ -312,6 +321,7 @@ def _run_gowitness_from_root(
     root: Path,
     user_id: UUID,
     request_ip: str | None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict:
     """Run gowitness import on an existing directory; return result dict."""
     parse_result = parse_gowitness_directory(root)
@@ -331,7 +341,9 @@ def _run_gowitness_from_root(
             "errors": parse_result.errors,
             "skipped": 0,
         }
-    summary = _run_gowitness(db, project_id, root, user_id, request_ip)
+    summary = _run_gowitness(
+        db, project_id, root, user_id, request_ip, progress_callback=progress_callback
+    )
     return {
         "format": "gowitness",
         "hosts_created": summary.hosts_created,

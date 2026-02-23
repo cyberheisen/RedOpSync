@@ -121,7 +121,7 @@ Imports are sent as multipart uploads. For large files (e.g. ~130MB GoWitness ZI
 
 - **Behind nginx (or similar)**: Increase body size and timeouts so the request is not rejected or cut:
   - `client_max_body_size 200m;`
-  - `proxy_connect_timeout`, `proxy_send_timeout`, `proxy_read_timeout` (e.g. 300s) for the API location.
+  - `proxy_connect_timeout`, `proxy_send_timeout`, `proxy_read_timeout` for the API location. Use at least 600s for `proxy_read_timeout` so the server has time to process large imports after upload.
   See [deploy/nginx-import.conf.example](deploy/nginx-import.conf.example) for a snippet.
 - **Uvicorn only**: The API does not enforce a body limit. If the connection drops, increase the server keep-alive (e.g. `uvicorn ... --timeout-keep-alive 300`).
 

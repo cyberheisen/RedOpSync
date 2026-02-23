@@ -1,7 +1,15 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiUrl } from "../lib/api";
+
+type ImportJobProgress = { current: number; total: number };
+type ImportJobState = {
+  status: "running" | "completed" | "failed";
+  progress: ImportJobProgress | null;
+  result?: ImportResult;
+  error?: string;
+};
 
 export type ImportHostsContext =
   | { type: "scope" }
@@ -38,11 +46,24 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
   const [pathSelectedFile, setPathSelectedFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [importProgress, setImportProgress] = useState<ImportJobProgress | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pathFileInputRef = useRef<HTMLInputElement>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const IMPORT_RESPONSE_TIMEOUT_MS = 600000; // 10 minutes for server to process large files
+
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    };
+  }, []);
 
   function importViaXhr(
     url: string,
@@ -52,6 +73,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.withCredentials = true;
+      xhr.timeout = IMPORT_RESPONSE_TIMEOUT_MS;
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable && e.total > 0) {
           onProgress(Math.round((e.loaded / e.total) * 100));
@@ -72,11 +94,21 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
       };
       xhr.onerror = () => {
         onProgress(null);
-        reject(new Error("Network error"));
+        reject(
+          new Error(
+            "Network error. For large files the connection may have been closed while the server was still processing. " +
+              "If you use a reverse proxy (e.g. nginx), increase proxy_read_timeout for the API.",
+          ),
+        );
       };
       xhr.ontimeout = () => {
         onProgress(null);
-        reject(new Error("Request timed out"));
+        reject(
+          new Error(
+            "Request timed out. The server took too long to process the file. " +
+              "Try a smaller file or increase server/proxy timeouts.",
+          ),
+        );
       };
       xhr.open("POST", url);
       xhr.send(formData);
@@ -117,8 +149,13 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
       if (!pathSelectedFile) return;
       setLoading(true);
       setUploadProgress(0);
+      setImportProgress(null);
       setError(null);
       setResult(null);
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
       try {
         const fd = new FormData();
         fd.append("file", pathSelectedFile);
@@ -131,12 +168,61 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
           setError(typeof data.detail === "string" ? data.detail : `Import failed (${status})`);
           return;
         }
+        const jobId = (data as { job_id?: string }).job_id;
+        if (status === 202 && jobId) {
+          setUploadProgress(null);
+          const poll = async (): Promise<boolean> => {
+            try {
+              const r = await fetch(apiUrl(`/api/projects/${projectId}/import-jobs/${jobId}`), {
+                credentials: "include",
+              });
+              if (!r.ok) return false;
+              const job = (await r.json()) as ImportJobState;
+              if (job.status === "completed" && job.result) {
+                if (pollIntervalRef.current) {
+                  clearInterval(pollIntervalRef.current);
+                  pollIntervalRef.current = null;
+                }
+                setImportProgress(null);
+                setLoading(false);
+                applyResult(job.result);
+                return true;
+              }
+              if (job.status === "failed") {
+                if (pollIntervalRef.current) {
+                  clearInterval(pollIntervalRef.current);
+                  pollIntervalRef.current = null;
+                }
+                setImportProgress(null);
+                setLoading(false);
+                setError(job.error ?? "Import failed");
+                return true;
+              }
+              if (job.progress) setImportProgress(job.progress);
+            } catch {
+              // ignore poll errors; will retry
+            }
+            return false;
+          };
+          const done = await poll();
+          if (!done) {
+            pollIntervalRef.current = setInterval(async () => {
+              const d = await poll();
+              if (d && pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+              }
+            }, 1500);
+          }
+          return;
+        }
         applyResult(data as ImportResult);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Import failed");
       } finally {
         setLoading(false);
         setUploadProgress(null);
+        setImportProgress(null);
       }
       return;
     }
@@ -181,11 +267,16 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
   };
 
   const handleReset = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
     setSelectedFiles([]);
     setPathSelectedFile(null);
     setResult(null);
     setError(null);
     setUploadProgress(null);
+    setImportProgress(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
     if (pathFileInputRef.current) pathFileInputRef.current.value = "";
   };
@@ -319,7 +410,11 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
             {loading && (
               <div style={{ marginBottom: 16 }}>
                 <p style={{ margin: "0 0 6px", fontSize: 13, color: "var(--text-muted)" }}>
-                  {uploadProgress !== null ? `Uploading... ${uploadProgress}%` : "Processing import..."}
+                  {uploadProgress !== null
+                    ? `Uploading... ${uploadProgress}%`
+                    : importProgress
+                      ? `Processing import... ${importProgress.current} of ${importProgress.total}`
+                      : "Processing import..."}
                 </p>
                 <div
                   style={{
@@ -332,7 +427,12 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
                   <div
                     style={{
                       height: "100%",
-                      width: uploadProgress !== null ? `${uploadProgress}%` : "100%",
+                      width:
+                        uploadProgress !== null
+                          ? `${uploadProgress}%`
+                          : importProgress && importProgress.total > 0
+                            ? `${Math.round((importProgress.current / importProgress.total) * 100)}%`
+                            : "100%",
                       backgroundColor: "var(--accent)",
                       transition: "width 0.2s ease-out",
                     }}
