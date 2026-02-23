@@ -5,6 +5,69 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 
+# ---- Report Builder (service_current) filter DSL ----
+
+class PortFilter(BaseModel):
+    """Port filter: eq, in, not_in, or range."""
+    eq: int | None = None
+    in_: list[int] | None = Field(None, alias="in")
+    not_in: list[int] | None = None
+    range_: list[int] | None = Field(None, alias="range")  # [min, max] inclusive
+
+    model_config = {"populate_by_name": True}
+
+
+class LastSeenFilter(BaseModel):
+    """Last seen (timestamp) range."""
+    after: datetime | str | None = None
+    before: datetime | str | None = None
+
+
+class ReportFilterDSL(BaseModel):
+    """Single filter clause (AND semantics when combined). All fields optional."""
+    port: PortFilter | int | None = None
+    proto: str | None = None
+    state: str | None = None
+    has_http: bool | None = None
+    http_status: int | None = None
+    server_contains: str | None = None
+    title_contains: str | None = None
+    product_contains: str | None = None
+    cpe_contains: str | None = None
+    asn: str | None = None
+    org_contains: str | None = None
+    country_contains: str | None = None
+    last_seen: LastSeenFilter | None = None
+    tags_contains: str | None = None
+
+
+class ReportSortSpec(BaseModel):
+    """Sort by one column."""
+    column: str
+    descending: bool = False
+
+
+class ReportDefinition(BaseModel):
+    """Full report definition: filters, columns, sort, pagination. Stored as definition_json."""
+    filters: list[ReportFilterDSL] = Field(default_factory=list)
+    columns: list[str] = Field(default_factory=list)
+    sort: ReportSortSpec | None = None
+    limit: int = Field(default=500, ge=1, le=10000)
+    offset: int = Field(default=0, ge=0)
+
+
+class ExecuteReportRequest(BaseModel):
+    """Request to execute report (ad-hoc definition or reference to saved)."""
+    definition: ReportDefinition
+
+
+class ExecuteReportResponse(BaseModel):
+    """Report execution result with pagination."""
+    columns: list[str]
+    rows: list[dict]
+    total_count: int
+
+
 class SavedReportQueryDefinition(BaseModel):
     """Stored report definition (data source, columns, filter)."""
 
@@ -29,9 +92,28 @@ class SavedReportRead(BaseModel):
     name: str
     description: str | None
     query_definition: SavedReportQueryDefinition
+    definition: ReportDefinition | None = None
     created_at: datetime
+    updated_at: datetime | None = None
+    created_by_user_id: UUID | None = None
 
     model_config = {"from_attributes": True}
+
+
+class SavedReportCreateV2(BaseModel):
+    """Create a saved report (report builder: store definition_json)."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    description: str | None = None
+    definition: ReportDefinition
+
+
+class SavedReportUpdate(BaseModel):
+    """Update a saved report."""
+
+    name: str | None = Field(None, min_length=1, max_length=255)
+    description: str | None = None
+    definition: ReportDefinition | None = None
 
 
 class ReportFiltersSchema(BaseModel):

@@ -21,10 +21,20 @@ from app.schemas.report import (
     ReportFiltersSchema,
     ReportBuilderRequest,
     SavedReportCreate,
+    SavedReportCreateV2,
     SavedReportRead,
+    SavedReportUpdate,
     SavedReportQueryDefinition,
+    ReportDefinition,
+    ExecuteReportRequest,
+    ExecuteReportResponse,
 )
 from app.services.audit import log_audit
+from app.services.report_builder_service import (
+    execute_report,
+    SERVICE_CURRENT_COLUMNS,
+    SELECT_COLUMN_EXPRESSIONS,
+)
 from app.db.session import SessionLocal
 from app.services.import_dispatcher import run_import, run_gowitness_import_from_path
 from app.services.import_job_store import create_job, get_job, set_failed, set_progress, set_result
@@ -496,6 +506,35 @@ def import_from_path(
     raise HTTPException(status_code=400, detail="Path must be a file or a directory.")
 
 
+# Service-current column labels for Report Builder (service_current view)
+SERVICE_CURRENT_COLUMN_LABELS = {
+    "host_ip": "Host IP",
+    "host_fqdn": "Host FQDN",
+    "host_tags": "Host tags",
+    "service_id": "Service ID",
+    "proto": "Protocol",
+    "port": "Port",
+    "state": "State",
+    "last_seen": "Last seen",
+    "service_name": "Service name",
+    "service_version": "Service version",
+    "banner": "Banner",
+    "scan_metadata": "Scan metadata",
+    "whois_data": "Whois data",
+    "latest_evidence_caption": "Latest evidence caption",
+    "screenshot_path": "Screenshot path",
+    "latest_http_title": "HTTP title",
+    "latest_http_server": "HTTP server",
+    "latest_http_status_code": "HTTP status",
+    "latest_gowitness_tech": "GoWitness tech",
+    "has_http": "Has HTTP",
+    "whois_asn": "ASN",
+    "whois_org": "Org",
+    "whois_cidr": "CIDR",
+    "whois_country": "Country",
+}
+
+
 @router.get("/{project_id}/reports/builder/columns")
 def get_builder_columns(
     project_id: UUID,
@@ -507,6 +546,24 @@ def get_builder_columns(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return _builder_columns_json()
+
+
+@router.get("/{project_id}/reports/service-current/columns")
+def get_service_current_columns(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get available columns for Report Builder (service_current view)."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {
+        "service_current": [
+            [cid, SERVICE_CURRENT_COLUMN_LABELS.get(cid, cid)]
+            for cid in sorted(SELECT_COLUMN_EXPRESSIONS.keys())
+        ],
+    }
 
 
 @router.post("/{project_id}/reports/builder", response_model=ReportRunResponse)
@@ -549,6 +606,24 @@ def run_report_builder(
     )
 
 
+@router.post("/{project_id}/reports/execute", response_model=ExecuteReportResponse)
+def execute_report_definition(
+    project_id: UUID,
+    body: ExecuteReportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Execute ad-hoc report definition (no save). Mission-scoped."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        columns, rows, total_count = execute_report(db, project_id, body.definition)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return ExecuteReportResponse(columns=columns, rows=rows, total_count=total_count)
+
+
 @router.get("/{project_id}/reports/saved", response_model=list[SavedReportRead])
 def list_saved_reports(
     project_id: UUID,
@@ -560,21 +635,32 @@ def list_saved_reports(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     reports = db.query(SavedReport).filter(SavedReport.project_id == project_id).order_by(SavedReport.created_at.desc()).all()
-    return [
-        SavedReportRead(
-            id=r.id,
-            project_id=r.project_id,
-            name=r.name,
-            description=r.description,
-            query_definition=SavedReportQueryDefinition(
-                data_source=r.data_source,
-                columns=r.columns or [],
-                filter_expression=r.filter_expression or "",
-            ),
-            created_at=r.created_at,
+    out = []
+    for r in reports:
+        definition = None
+        if r.definition_json:
+            try:
+                definition = ReportDefinition.model_validate(r.definition_json)
+            except Exception:
+                pass
+        out.append(
+            SavedReportRead(
+                id=r.id,
+                project_id=r.project_id,
+                name=r.name,
+                description=r.description,
+                query_definition=SavedReportQueryDefinition(
+                    data_source=r.data_source,
+                    columns=r.columns or [],
+                    filter_expression=r.filter_expression or "",
+                ),
+                definition=definition,
+                created_at=r.created_at,
+                updated_at=r.updated_at,
+                created_by_user_id=r.created_by_user_id,
+            )
         )
-        for r in reports
-    ]
+    return out
 
 
 @router.post("/{project_id}/reports/saved", response_model=SavedReportRead, status_code=201)
@@ -584,12 +670,12 @@ def create_saved_report(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Save a report definition."""
+    """Save a report definition (legacy: query_definition)."""
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     q = body.query_definition
-    if q.data_source not in ("hosts", "ports", "evidence", "vulns"):
+    if q.data_source not in ("hosts", "ports", "evidence", "vulns", "service_current"):
         raise HTTPException(status_code=400, detail="Invalid data_source")
     sr = SavedReport(
         project_id=project_id,
@@ -598,22 +684,40 @@ def create_saved_report(
         data_source=q.data_source,
         columns=q.columns,
         filter_expression=q.filter_expression or None,
+        created_by_user_id=current_user.id,
     )
     db.add(sr)
     db.commit()
     db.refresh(sr)
-    return SavedReportRead(
-        id=sr.id,
-        project_id=sr.project_id,
-        name=sr.name,
-        description=sr.description,
-        query_definition=SavedReportQueryDefinition(
-            data_source=sr.data_source,
-            columns=sr.columns or [],
-            filter_expression=sr.filter_expression or "",
-        ),
-        created_at=sr.created_at,
+    return _saved_report_to_read(sr)
+
+
+@router.post("/{project_id}/reports/saved/v2", response_model=SavedReportRead, status_code=201)
+def create_saved_report_v2(
+    project_id: UUID,
+    body: SavedReportCreateV2,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Save a report definition (Report Builder: definition_json)."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    defn = body.definition
+    sr = SavedReport(
+        project_id=project_id,
+        name=body.name,
+        description=body.description,
+        data_source="service_current",
+        columns=defn.columns or [],
+        filter_expression=None,
+        definition_json=defn.model_dump(mode="json"),
+        created_by_user_id=current_user.id,
     )
+    db.add(sr)
+    db.commit()
+    db.refresh(sr)
+    return _saved_report_to_read(sr)
 
 
 @router.post("/{project_id}/reports/saved/{report_id}/run", response_model=ReportRunResponse)
