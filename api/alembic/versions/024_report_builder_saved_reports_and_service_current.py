@@ -61,7 +61,6 @@ def upgrade() -> None:
       h.tags AS host_tags,
       h.whois_data,
       p.id AS service_id,
-      p.host_id,
       p.protocol AS proto,
       p.number AS port,
       p.state,
