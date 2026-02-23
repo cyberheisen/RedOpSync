@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     admin_password: str = Field(default="admin", alias="ADMIN_PASSWORD")
     lock_ttl_seconds: int = Field(default=120, alias="LOCK_TTL_SECONDS")
     gowitness_import_dir: str = Field(default="", alias="GOWITNESS_IMPORT_DIR")
-    import_from_path_dir: str = Field(default="", alias="IMPORT_FROM_PATH_DIR")
+    import_from_path_dir: str = Field(default="/tmp", alias="IMPORT_FROM_PATH_DIR")
 
     @property
     def cors_origins_list(self):

@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.admin_deps import require_admin
@@ -321,6 +321,51 @@ async def import_scan(
     return _aggregate_import_results(results, formats_used)
 
 
+def _resolve_import_path(path_str: str) -> tuple[Path, Path]:
+    """Resolve base and full path; full must be under base. Returns (base, full). Raises HTTPException on violation."""
+    base = Path(settings.import_from_path_dir).resolve()
+    base.mkdir(parents=True, exist_ok=True)
+    path_str = (path_str or "").strip().lstrip("/")
+    full = (base / path_str).resolve() if path_str else base
+    try:
+        if path_str and os.path.commonpath([base, full]) != str(base):
+            raise HTTPException(status_code=400, detail="Path must be under the import directory.")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Path must be under the import directory.")
+    return base, full
+
+
+@router.get("/{project_id}/import-from-path/browse")
+def browse_import_path(
+    project_id: UUID,
+    path: str = Query("", description="Relative path under the import directory"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    List files and directories on the server under the import directory.
+    Use path to navigate (e.g. path=subdir). Returns entries with name and type (file or directory).
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    base, full = _resolve_import_path(path)
+    if not full.exists():
+        raise HTTPException(status_code=404, detail="Path not found")
+    if not full.is_dir():
+        raise HTTPException(status_code=400, detail="Path must be a directory to browse")
+    entries: list[dict] = []
+    try:
+        for p in sorted(full.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+            try:
+                entries.append({"name": p.name, "type": "directory" if p.is_dir() else "file"})
+            except OSError:
+                continue
+    except OSError as e:
+        raise HTTPException(status_code=403, detail=f"Cannot list directory: {e}")
+    return {"path": path or ".", "entries": entries}
+
+
 @router.post("/{project_id}/import-from-path")
 def import_from_path(
     project_id: UUID,
@@ -332,7 +377,7 @@ def import_from_path(
     """
     Import from a file or directory on the server. Path is relative to the import directory.
     Supports all formats: Nmap XML, GoWitness (zip or directory), text, Masscan list, Whois JSON.
-    Default import directory: {ATTACHMENTS_DIR}/imports (override with IMPORT_FROM_PATH_DIR).
+    Default import directory: /tmp (override with IMPORT_FROM_PATH_DIR).
     """
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
@@ -342,15 +387,7 @@ def import_from_path(
     if not path_str:
         raise HTTPException(status_code=400, detail="Path is required")
 
-    base = Path(settings.import_from_path_dir or os.path.join(settings.attachments_dir, "imports")).resolve()
-    base.mkdir(parents=True, exist_ok=True)
-    full = (base / path_str.lstrip("/")).resolve()
-    try:
-        if os.path.commonpath([base, full]) != str(base):
-            raise HTTPException(status_code=400, detail="Path must be under the import directory.")
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Path must be under the import directory.")
-
+    _base, full = _resolve_import_path(path_str)
     if not full.exists():
         raise HTTPException(status_code=404, detail="File or directory not found")
 
