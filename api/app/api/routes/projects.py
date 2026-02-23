@@ -355,6 +355,38 @@ def _resolve_import_path(path_str: str) -> tuple[Path, Path]:
     return base, full
 
 
+@router.get("/{project_id}/import-from-path/files")
+def list_import_from_path_files(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List files and directories in the server's import directory (IMPORT_FROM_PATH_DIR). Paths are relative for use with POST import-from-path."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    base = Path(settings.import_from_path_dir).resolve()
+    base.mkdir(parents=True, exist_ok=True)
+    if not base.is_dir():
+        return {"files": []}
+    files: list[dict] = []
+    try:
+        for entry in sorted(base.iterdir()):
+            try:
+                rel = entry.relative_to(base)
+                path_str = str(rel).replace("\\", "/")
+            except ValueError:
+                continue
+            if entry.is_dir():
+                files.append({"name": entry.name, "path": path_str, "is_dir": True})
+            elif entry.is_file() and any(entry.name.lower().endswith(ext) for ext in ALLOWED_IMPORT_EXTENSIONS):
+                files.append({"name": entry.name, "path": path_str, "is_dir": False})
+    except OSError as e:
+        logger.warning("List import dir failed: %s", e)
+        raise HTTPException(status_code=500, detail="Could not list import directory")
+    return {"files": files}
+
+
 def _run_import_job(
     job_id: str,
     project_id: UUID,
@@ -368,12 +400,27 @@ def _run_import_job(
     db = SessionLocal()
     try:
         path = Path(file_path)
-        if not path.is_file():
-            set_failed(job_id, f"File not found: {file_path}")
+        if not path.exists():
+            set_failed(job_id, f"File or directory not found: {file_path}")
             return
 
         def progress_cb(current: int, total: int) -> None:
             set_progress(job_id, current, total)
+
+        if path.is_dir():
+            result = run_gowitness_import_from_path(
+                db, project_id, path, user_id, request_ip, progress_callback=progress_cb
+            )
+            set_result(job_id, result)
+            logger.info(
+                "Import job completed job_id=%s format=gowitness hosts_created=%s screenshots_imported=%s",
+                job_id, result.get("hosts_created", 0), result.get("screenshots_imported", 0),
+            )
+            return
+
+        if not path.is_file():
+            set_failed(job_id, f"Not a file: {file_path}")
+            return
 
         if path.suffix.lower() == ".zip":
             with zipfile.ZipFile(path, "r") as zf:
@@ -519,6 +566,43 @@ def get_import_job(
     return job
 
 
+@router.post("/{project_id}/import-from-path/start")
+def import_from_path_start(
+    project_id: UUID,
+    request: Request,
+    body: ImportFromPathBody = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Start import from a file or directory on the server (path relative to IMPORT_FROM_PATH_DIR).
+    Returns 202 with job_id; poll GET /import-jobs/{job_id} for status. Use for large files to avoid timeouts.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    path_str = (body.path or "").strip()
+    if not path_str:
+        raise HTTPException(status_code=400, detail="Path is required")
+    _base, full = _resolve_import_path(path_str)
+    if not full.exists():
+        raise HTTPException(status_code=404, detail="File or directory not found")
+    if full.is_file() and not any(full.name.lower().endswith(ext) for ext in ALLOWED_IMPORT_EXTENSIONS):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Use .xml, .zip, .txt, .json, .masscan, or .lst",
+        )
+    job_id = create_job(project_id)
+    request_ip = _get_client_ip(request)
+    thread = threading.Thread(
+        target=_run_import_job,
+        args=(job_id, project_id, str(full), full.name, current_user.id, request_ip),
+    )
+    thread.start()
+    logger.info("Import from path started job_id=%s project_id=%s path=%s returning 202", job_id, project_id, path_str)
+    return JSONResponse(status_code=202, content={"job_id": job_id})
+
+
 @router.post("/{project_id}/import-from-path")
 def import_from_path(
     project_id: UUID,
@@ -528,9 +612,8 @@ def import_from_path(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Import from a file or directory on the server. Path is relative to the import directory.
-    Supports all formats: Nmap XML, GoWitness (zip or directory), text, Masscan list, Whois JSON.
-    Default import directory: /tmp (override with IMPORT_FROM_PATH_DIR).
+    Import from a file or directory on the server (synchronous). Path is relative to the import directory.
+    For large files prefer POST /import-from-path/start (returns 202, poll import-jobs).
     """
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:

@@ -40,10 +40,14 @@ type ImportResult = {
 
 type ImportMode = "upload" | "path";
 
+type ServerFileEntry = { name: string; path: string; is_dir: boolean };
+
 export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Props) {
   const [mode, setMode] = useState<ImportMode>("upload");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [pathSelectedFile, setPathSelectedFile] = useState<File | null>(null);
+  const [serverFiles, setServerFiles] = useState<ServerFileEntry[]>([]);
+  const [serverFilesLoading, setServerFilesLoading] = useState(false);
+  const [selectedServerPath, setSelectedServerPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [importProgress, setImportProgress] = useState<ImportJobProgress | null>(null);
@@ -51,7 +55,6 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
   const [error, setError] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const pathFileInputRef = useRef<HTMLInputElement>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const IMPORT_RESPONSE_TIMEOUT_MS = 600000; // 10 minutes for server to process large files
@@ -64,6 +67,17 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (mode !== "path") return;
+    setServerFilesLoading(true);
+    setError(null);
+    fetch(apiUrl(`/api/projects/${projectId}/import-from-path/files`), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Failed to list files"))))
+      .then((data: { files: ServerFileEntry[] }) => setServerFiles(data.files ?? []))
+      .catch(() => setServerFiles([]))
+      .finally(() => setServerFilesLoading(false));
+  }, [mode, projectId]);
 
   function importViaXhr(
     url: string,
@@ -146,9 +160,8 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
     };
 
     if (mode === "path") {
-      if (!pathSelectedFile) return;
+      if (!selectedServerPath) return;
       setLoading(true);
-      setUploadProgress(0);
       setImportProgress(null);
       setError(null);
       setResult(null);
@@ -157,21 +170,18 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
         pollIntervalRef.current = null;
       }
       try {
-        const fd = new FormData();
-        fd.append("file", pathSelectedFile);
-        const { ok, status, data } = await importViaXhr(
-          apiUrl(`/api/projects/${projectId}/import-from-path/upload`),
-          fd,
-          setUploadProgress,
-        );
-        if (!ok) {
-          setError(typeof data.detail === "string" ? data.detail : `Import failed (${status})`);
-          return;
-        }
-        const jobId = (data as { job_id?: string }).job_id;
-        const isAsyncJob = (status === 202 || status === 200) && !!jobId;
+        const r = await fetch(apiUrl(`/api/projects/${projectId}/import-from-path/start`), {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: selectedServerPath }),
+        });
+        const data = r.ok && r.headers.get("content-type")?.includes("json")
+          ? ((await r.json()) as { job_id?: string } & ImportResult)
+          : {};
+        const jobId = data.job_id;
+        const isAsyncJob = (r.status === 202 || r.status === 200) && !!jobId;
         if (isAsyncJob) {
-          setUploadProgress(null);
           const stopPolling = () => {
             if (pollIntervalRef.current) {
               clearInterval(pollIntervalRef.current);
@@ -182,16 +192,16 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
           };
           const poll = async (): Promise<boolean> => {
             try {
-              const r = await fetch(apiUrl(`/api/projects/${projectId}/import-jobs/${jobId}`), {
+              const pr = await fetch(apiUrl(`/api/projects/${projectId}/import-jobs/${jobId}`), {
                 credentials: "include",
               });
-              if (r.status === 404) {
+              if (pr.status === 404) {
                 stopPolling();
                 setError("Import job not found or expired. The import may still be running on the server—check the mission.");
                 return true;
               }
-              if (!r.ok) return false;
-              const job = (await r.json()) as ImportJobState;
+              if (!pr.ok) return false;
+              const job = (await pr.json()) as ImportJobState;
               if (job.status === "completed" && job.result) {
                 stopPolling();
                 applyResult(job.result);
@@ -204,7 +214,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
               }
               if (job.progress) setImportProgress(job.progress);
             } catch {
-              // ignore poll errors; will retry
+              // ignore
             }
             return false;
           };
@@ -220,12 +230,16 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
           }
           return;
         }
+        if (!r.ok) {
+          const detail = typeof data.detail === "string" ? data.detail : `Import failed (${r.status})`;
+          setError(detail);
+          return;
+        }
         applyResult(data as ImportResult);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Import failed");
       } finally {
         setLoading(false);
-        setUploadProgress(null);
         setImportProgress(null);
       }
       return;
@@ -257,18 +271,6 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
   };
 
   const handleFileClick = () => fileInputRef.current?.click();
-  const handlePathFileClick = () => pathFileInputRef.current?.click();
-
-  const handlePathFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      setError(null);
-      setPathSelectedFile(files[0]);
-    } else {
-      setPathSelectedFile(null);
-      setError(null);
-    }
-  };
 
   const handleReset = () => {
     if (pollIntervalRef.current) {
@@ -276,13 +278,12 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
       pollIntervalRef.current = null;
     }
     setSelectedFiles([]);
-    setPathSelectedFile(null);
+    setSelectedServerPath(null);
     setResult(null);
     setError(null);
     setUploadProgress(null);
     setImportProgress(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
-    if (pathFileInputRef.current) pathFileInputRef.current.value = "";
   };
 
   return (
@@ -335,7 +336,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
               <button
                 type="button"
                 className={mode === "path" ? "theme-btn theme-btn-primary" : "theme-btn theme-btn-ghost"}
-                onClick={() => { setMode("path"); setError(null); setPathSelectedFile(null); }}
+                onClick={() => { setMode("path"); setError(null); setSelectedServerPath(null); }}
               >
                 Import from server path
               </button>
@@ -387,27 +388,47 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
             ) : (
               <>
                 <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--text-muted)" }}>
-                  Choose a file from your computer. It will be saved to the server then imported (good for large files).
+                  Files in the server import directory ({serverFilesLoading ? "loading…" : "select one to import"})
                 </p>
-                <input
-                  ref={pathFileInputRef}
-                  type="file"
-                  accept=".xml,.zip,.txt,.json,.masscan,.lst"
-                  onChange={handlePathFileChange}
-                  style={{ display: "none" }}
-                />
                 <div
                   style={{
-                    padding: 16,
-                    border: "1px dashed var(--border)",
+                    border: "1px solid var(--border)",
                     borderRadius: 8,
                     marginBottom: 16,
-                    textAlign: "center",
-                    cursor: "pointer",
+                    maxHeight: 220,
+                    overflowY: "auto",
                   }}
-                  onClick={handlePathFileClick}
                 >
-                  {pathSelectedFile ? pathSelectedFile.name : "Choose file"}
+                  {serverFilesLoading ? (
+                    <p style={{ padding: 16, margin: 0, color: "var(--text-muted)", fontSize: 13 }}>
+                      Loading…
+                    </p>
+                  ) : serverFiles.length === 0 ? (
+                    <p style={{ padding: 16, margin: 0, color: "var(--text-muted)", fontSize: 13 }}>
+                      No importable files or folders. Add files to the server import directory (see IMPORT_FROM_PATH_DIR).
+                    </p>
+                  ) : (
+                    <ul style={{ margin: 0, padding: "8px 0", listStyle: "none" }}>
+                      {serverFiles.map((f) => (
+                        <li key={f.path}>
+                          <button
+                            type="button"
+                            className="theme-btn theme-btn-ghost"
+                            style={{
+                              width: "100%",
+                              textAlign: "left",
+                              padding: "8px 16px",
+                              fontWeight: selectedServerPath === f.path ? 600 : undefined,
+                              backgroundColor: selectedServerPath === f.path ? "var(--bg-elevated)" : undefined,
+                            }}
+                            onClick={() => setSelectedServerPath(selectedServerPath === f.path ? null : f.path)}
+                          >
+                            {f.is_dir ? "📁 " : ""}{f.name}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               </>
             )}
@@ -455,7 +476,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
                 type="button"
                 className="theme-btn theme-btn-primary"
                 onClick={handleImport}
-                disabled={(mode === "upload" && selectedFiles.length === 0) || (mode === "path" && !pathSelectedFile) || loading}
+                disabled={(mode === "upload" && selectedFiles.length === 0) || (mode === "path" && !selectedServerPath) || loading}
               >
                 {loading ? "Importing…" : "Import"}
               </button>
