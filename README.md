@@ -115,6 +115,16 @@ If the app loads but login fails with a network error:
    docker compose down && docker compose up -d
    ```
 
+### Large file imports (e.g. GoWitness ZIP)
+
+Imports are sent as multipart uploads. For large files (e.g. ~130MB GoWitness ZIP):
+
+- **Behind nginx (or similar)**: Increase body size and timeouts so the request is not rejected or cut:
+  - `client_max_body_size 200m;`
+  - `proxy_connect_timeout`, `proxy_send_timeout`, `proxy_read_timeout` (e.g. 300s) for the API location.
+  See [deploy/nginx-import.conf.example](deploy/nginx-import.conf.example) for a snippet.
+- **Uvicorn only**: The API does not enforce a body limit. If the connection drops, increase the server keep-alive (e.g. `uvicorn ... --timeout-keep-alive 300`).
+
 ---
 
 ## Running without Docker (local dev)

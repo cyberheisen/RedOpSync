@@ -39,3 +39,5 @@ To have the whole stack start when the machine boots, install the systemd unit.
    - `sudo systemctl restart redopsync` — down then up
 
 Note: The unit runs `docker compose up -d` and `docker compose down`. For logs and per-service control, use `docker compose` in the project directory as usual.
+
+For large import uploads (e.g. GoWitness ZIP), see [nginx-import.conf.example](nginx-import.conf.example) if you use nginx in front of the API.
