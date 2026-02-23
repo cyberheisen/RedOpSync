@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { apiUrl } from "../lib/api";
 
 export type ImportHostsContext =
@@ -30,47 +30,18 @@ type ImportResult = {
   files_processed?: number;
 };
 
-const ALLOWED_IMPORT_EXTENSIONS = [".xml", ".zip", ".txt", ".json", ".masscan", ".lst"];
-
 type ImportMode = "upload" | "path";
-
-type BrowseEntry = { name: string; type: "file" | "directory" };
 
 export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Props) {
   const [mode, setMode] = useState<ImportMode>("upload");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [pathInput, setPathInput] = useState("");
-  const [browsePath, setBrowsePath] = useState("");
-  const [browseEntries, setBrowseEntries] = useState<BrowseEntry[]>([]);
-  const [browseLoading, setBrowseLoading] = useState(false);
-  const [browseError, setBrowseError] = useState<string | null>(null);
+  const [pathSelectedFile, setPathSelectedFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (mode !== "path" || !projectId) return;
-    setBrowseError(null);
-    setBrowseLoading(true);
-    const q = browsePath ? `?path=${encodeURIComponent(browsePath)}` : "";
-    fetch(apiUrl(`/api/projects/${projectId}/import-from-path/browse${q}`), { credentials: "include" })
-      .then((res) => res.json().then((data) => ({ res, data })))
-      .then(({ res, data }) => {
-        if (!res.ok) {
-          setBrowseError(typeof data.detail === "string" ? data.detail : "Failed to list directory");
-          setBrowseEntries([]);
-          return;
-        }
-        setBrowseEntries(data.entries || []);
-      })
-      .catch(() => {
-        setBrowseError("Failed to list directory");
-        setBrowseEntries([]);
-      })
-      .finally(() => setBrowseLoading(false));
-  }, [mode, projectId, browsePath]);
+  const pathFileInputRef = useRef<HTMLInputElement>(null);
 
   const subtext =
     context.type === "scope"
@@ -90,17 +61,17 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
 
   const handleImport = async () => {
     if (mode === "path") {
-      const path = pathInput.trim();
-      if (!path) return;
+      if (!pathSelectedFile) return;
       setLoading(true);
       setError(null);
       setResult(null);
       try {
-        const res = await fetch(apiUrl(`/api/projects/${projectId}/import-from-path`), {
+        const fd = new FormData();
+        fd.append("file", pathSelectedFile);
+        const res = await fetch(apiUrl(`/api/projects/${projectId}/import-from-path/upload`), {
           method: "POST",
           credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path }),
+          body: fd,
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
@@ -159,13 +130,26 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
   };
 
   const handleFileClick = () => fileInputRef.current?.click();
+  const handlePathFileClick = () => pathFileInputRef.current?.click();
+
+  const handlePathFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      setError(null);
+      setPathSelectedFile(files[0]);
+    } else {
+      setPathSelectedFile(null);
+      setError(null);
+    }
+  };
 
   const handleReset = () => {
     setSelectedFiles([]);
-    setPathInput("");
+    setPathSelectedFile(null);
     setResult(null);
     setError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
+    if (pathFileInputRef.current) pathFileInputRef.current.value = "";
   };
 
   return (
@@ -218,7 +202,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
               <button
                 type="button"
                 className={mode === "path" ? "theme-btn theme-btn-primary" : "theme-btn theme-btn-ghost"}
-                onClick={() => { setMode("path"); setError(null); setBrowsePath(""); setPathInput(""); }}
+                onClick={() => { setMode("path"); setError(null); setPathSelectedFile(null); }}
               >
                 Import from server path
               </button>
@@ -270,101 +254,28 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
             ) : (
               <>
                 <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--text-muted)" }}>
-                  Browse the server import directory and select a file or folder to import.
+                  Choose a file from your computer. It will be saved to the server then imported (good for large files).
                 </p>
+                <input
+                  ref={pathFileInputRef}
+                  type="file"
+                  accept=".xml,.zip,.txt,.json,.masscan,.lst"
+                  onChange={handlePathFileChange}
+                  style={{ display: "none" }}
+                />
                 <div
                   style={{
-                    border: "1px solid var(--border)",
+                    padding: 16,
+                    border: "1px dashed var(--border)",
                     borderRadius: 8,
-                    padding: 12,
-                    marginBottom: 12,
-                    minHeight: 180,
-                    maxHeight: 260,
-                    overflow: "auto",
-                    backgroundColor: "var(--input-bg)",
+                    marginBottom: 16,
+                    textAlign: "center",
+                    cursor: "pointer",
                   }}
+                  onClick={handlePathFileClick}
                 >
-                  <div style={{ marginBottom: 8, fontSize: 12, color: "var(--text-muted)" }}>
-                    {browsePath ? (
-                      <>
-                        <button
-                          type="button"
-                          className="theme-btn theme-btn-ghost"
-                          style={{ padding: "2px 6px", fontSize: 12 }}
-                          onClick={() => {
-                            const i = browsePath.lastIndexOf("/");
-                            setBrowsePath(i <= 0 ? "" : browsePath.slice(0, i));
-                            setPathInput("");
-                          }}
-                        >
-                          ↑ Parent
-                        </button>
-                        <span style={{ marginLeft: 8 }}>/ {browsePath}</span>
-                      </>
-                    ) : (
-                      <span>Import directory (root)</span>
-                    )}
-                  </div>
-                  {browsePath && (
-                    <p style={{ margin: "0 0 8px", fontSize: 12 }}>
-                      <button
-                        type="button"
-                        className="theme-btn theme-btn-ghost"
-                        style={{ padding: "2px 8px", fontSize: 12 }}
-                        onClick={() => setPathInput(browsePath)}
-                      >
-                        Use this folder (GoWitness)
-                      </button>
-                    </p>
-                  )}
-                  {browseLoading ? (
-                    <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>Loading…</p>
-                  ) : browseError ? (
-                    <p style={{ margin: 0, fontSize: 13, color: "var(--error)" }}>{browseError}</p>
-                  ) : browseEntries.length === 0 ? (
-                    <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>Empty directory</p>
-                  ) : (
-                    <ul style={{ margin: 0, paddingLeft: 20, listStyle: "none" }}>
-                      {browseEntries.map((ent) => (
-                        <li key={ent.name} style={{ marginBottom: 4 }}>
-                          {ent.type === "directory" ? (
-                            <button
-                              type="button"
-                              className="theme-btn theme-btn-ghost"
-                              style={{ padding: "2px 6px", fontSize: 13, textAlign: "left" }}
-                              onClick={() => {
-                                setBrowsePath(browsePath ? `${browsePath}/${ent.name}` : ent.name);
-                                setPathInput("");
-                              }}
-                            >
-                              📁 {ent.name}
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              className="theme-btn theme-btn-ghost"
-                              style={{
-                                padding: "2px 6px",
-                                fontSize: 13,
-                                textAlign: "left",
-                                opacity: ALLOWED_IMPORT_EXTENSIONS.some((ext) => ent.name.toLowerCase().endsWith(ext)) ? 1 : 0.6,
-                              }}
-                              onClick={() => setPathInput(browsePath ? `${browsePath}/${ent.name}` : ent.name)}
-                              title={ALLOWED_IMPORT_EXTENSIONS.some((ext) => ent.name.toLowerCase().endsWith(ext)) ? "Select to import" : "Unsupported type"}
-                            >
-                              📄 {ent.name}
-                            </button>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                  {pathSelectedFile ? pathSelectedFile.name : "Choose file"}
                 </div>
-                {pathInput && (
-                  <p style={{ margin: "0 0 8px", fontSize: 12, color: "var(--text-muted)" }}>
-                    Selected: <code style={{ fontSize: 11 }}>{pathInput}</code>
-                  </p>
-                )}
               </>
             )}
             {error && (
@@ -378,7 +289,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
                 type="button"
                 className="theme-btn theme-btn-primary"
                 onClick={handleImport}
-                disabled={(mode === "upload" && selectedFiles.length === 0) || (mode === "path" && !pathInput.trim()) || loading}
+                disabled={(mode === "upload" && selectedFiles.length === 0) || (mode === "path" && !pathSelectedFile) || loading}
               >
                 {loading ? "Importing…" : "Import"}
               </button>

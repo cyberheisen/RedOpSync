@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.admin_deps import require_admin
@@ -335,35 +335,55 @@ def _resolve_import_path(path_str: str) -> tuple[Path, Path]:
     return base, full
 
 
-@router.get("/{project_id}/import-from-path/browse")
-def browse_import_path(
+@router.post("/{project_id}/import-from-path/upload")
+async def import_from_path_upload(
     project_id: UUID,
-    path: str = Query("", description="Relative path under the import directory"),
+    request: Request,
+    file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
-    List files and directories on the server under the import directory.
-    Use path to navigate (e.g. path=subdir). Returns entries with name and type (file or directory).
+    Upload a file to the server's import directory then import it (same as picking a file via browse).
+    Use this for large files: upload saves to disk first, then imports from path. Same supported formats as regular import.
     """
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    base, full = _resolve_import_path(path)
-    if not full.exists():
-        raise HTTPException(status_code=404, detail="Path not found")
-    if not full.is_dir():
-        raise HTTPException(status_code=400, detail="Path must be a directory to browse")
-    entries: list[dict] = []
+    if not file.filename or not (file.filename or "").strip():
+        raise HTTPException(status_code=400, detail="No file provided")
+    fn = (file.filename or "upload").strip()
+    if not any(fn.lower().endswith(ext) for ext in ALLOWED_IMPORT_EXTENSIONS):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Use .xml, .zip, .txt, .json, .masscan, or .lst",
+        )
+    base = Path(settings.import_from_path_dir).resolve()
+    base.mkdir(parents=True, exist_ok=True)
+    safe_name = os.path.basename(fn)
+    if not safe_name or safe_name.startswith(".") or ".." in safe_name or "/" in safe_name or "\\" in safe_name:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    dest = base / safe_name
     try:
-        for p in sorted(full.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
-            try:
-                entries.append({"name": p.name, "type": "directory" if p.is_dir() else "file"})
-            except OSError:
-                continue
-    except OSError as e:
-        raise HTTPException(status_code=403, detail=f"Cannot list directory: {e}")
-    return {"path": path or ".", "entries": entries}
+        content = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read file: {e}")
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="File is empty")
+    try:
+        dest.write_bytes(content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save file on server: {e}")
+    request_ip = _get_client_ip(request)
+    try:
+        result = run_import(db, project_id, content, safe_name, current_user.id, request_ip)
+    except ValueError as e:
+        try:
+            dest.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise HTTPException(status_code=400, detail=str(e))
+    return result
 
 
 @router.post("/{project_id}/import-from-path")
