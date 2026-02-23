@@ -169,32 +169,36 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
           return;
         }
         const jobId = (data as { job_id?: string }).job_id;
-        if (status === 202 && jobId) {
+        const isAsyncJob = (status === 202 || status === 200) && !!jobId;
+        if (isAsyncJob) {
           setUploadProgress(null);
+          const stopPolling = () => {
+            if (pollIntervalRef.current) {
+              clearInterval(pollIntervalRef.current);
+              pollIntervalRef.current = null;
+            }
+            setImportProgress(null);
+            setLoading(false);
+          };
           const poll = async (): Promise<boolean> => {
             try {
               const r = await fetch(apiUrl(`/api/projects/${projectId}/import-jobs/${jobId}`), {
                 credentials: "include",
               });
+              if (r.status === 404) {
+                stopPolling();
+                setError("Import job not found or expired. The import may still be running on the server—check the mission.");
+                return true;
+              }
               if (!r.ok) return false;
               const job = (await r.json()) as ImportJobState;
               if (job.status === "completed" && job.result) {
-                if (pollIntervalRef.current) {
-                  clearInterval(pollIntervalRef.current);
-                  pollIntervalRef.current = null;
-                }
-                setImportProgress(null);
-                setLoading(false);
+                stopPolling();
                 applyResult(job.result);
                 return true;
               }
               if (job.status === "failed") {
-                if (pollIntervalRef.current) {
-                  clearInterval(pollIntervalRef.current);
-                  pollIntervalRef.current = null;
-                }
-                setImportProgress(null);
-                setLoading(false);
+                stopPolling();
                 setError(job.error ?? "Import failed");
                 return true;
               }
