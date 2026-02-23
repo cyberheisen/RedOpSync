@@ -37,11 +37,51 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [pathSelectedFile, setPathSelectedFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pathFileInputRef = useRef<HTMLInputElement>(null);
+
+  function importViaXhr(
+    url: string,
+    formData: FormData,
+    onProgress: (pct: number | null) => void,
+  ): Promise<{ ok: boolean; status: number; data: ImportResult | { detail?: string } }> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.withCredentials = true;
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && e.total > 0) {
+          onProgress(Math.round((e.loaded / e.total) * 100));
+        }
+      };
+      xhr.upload.onload = () => {
+        onProgress(null);
+      };
+      xhr.onload = () => {
+        onProgress(null);
+        let data: ImportResult | { detail?: string } = {};
+        try {
+          if (xhr.responseText) data = JSON.parse(xhr.responseText) as ImportResult | { detail?: string };
+        } catch {
+          // ignore
+        }
+        resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, data });
+      };
+      xhr.onerror = () => {
+        onProgress(null);
+        reject(new Error("Network error"));
+      };
+      xhr.ontimeout = () => {
+        onProgress(null);
+        reject(new Error("Request timed out"));
+      };
+      xhr.open("POST", url);
+      xhr.send(formData);
+    });
+  }
 
   const subtext =
     context.type === "scope"
@@ -60,58 +100,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
   };
 
   const handleImport = async () => {
-    if (mode === "path") {
-      if (!pathSelectedFile) return;
-      setLoading(true);
-      setError(null);
-      setResult(null);
-      try {
-        const fd = new FormData();
-        fd.append("file", pathSelectedFile);
-        const res = await fetch(apiUrl(`/api/projects/${projectId}/import-from-path/upload`), {
-          method: "POST",
-          credentials: "include",
-          body: fd,
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          setError(typeof data.detail === "string" ? data.detail : `Import failed (${res.status})`);
-          return;
-        }
-        setResult(data);
-        const hasData =
-          (data.hosts_created ?? 0) > 0 ||
-          (data.hosts_updated ?? 0) > 0 ||
-          (data.subnets_updated ?? 0) > 0 ||
-          (data.ports_created ?? 0) > 0 ||
-          (data.ports_updated ?? 0) > 0 ||
-          (data.screenshots_imported ?? 0) > 0 ||
-          (data.metadata_records_imported ?? 0) > 0;
-        if (hasData) onSuccess();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Import failed");
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-    if (selectedFiles.length === 0) return;
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    try {
-      const fd = new FormData();
-      selectedFiles.forEach((f) => fd.append("file", f));
-      const res = await fetch(apiUrl(`/api/projects/${projectId}/import`), {
-        method: "POST",
-        credentials: "include",
-        body: fd,
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(typeof data.detail === "string" ? data.detail : `Import failed (${res.status})`);
-        return;
-      }
+    const applyResult = (data: ImportResult) => {
       setResult(data);
       const hasData =
         (data.hosts_created ?? 0) > 0 ||
@@ -122,10 +111,58 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
         (data.screenshots_imported ?? 0) > 0 ||
         (data.metadata_records_imported ?? 0) > 0;
       if (hasData) onSuccess();
+    };
+
+    if (mode === "path") {
+      if (!pathSelectedFile) return;
+      setLoading(true);
+      setUploadProgress(0);
+      setError(null);
+      setResult(null);
+      try {
+        const fd = new FormData();
+        fd.append("file", pathSelectedFile);
+        const { ok, status, data } = await importViaXhr(
+          apiUrl(`/api/projects/${projectId}/import-from-path/upload`),
+          fd,
+          setUploadProgress,
+        );
+        if (!ok) {
+          setError(typeof data.detail === "string" ? data.detail : `Import failed (${status})`);
+          return;
+        }
+        applyResult(data as ImportResult);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Import failed");
+      } finally {
+        setLoading(false);
+        setUploadProgress(null);
+      }
+      return;
+    }
+    if (selectedFiles.length === 0) return;
+    setLoading(true);
+    setUploadProgress(0);
+    setError(null);
+    setResult(null);
+    try {
+      const fd = new FormData();
+      selectedFiles.forEach((f) => fd.append("file", f));
+      const { ok, status, data } = await importViaXhr(
+        apiUrl(`/api/projects/${projectId}/import`),
+        fd,
+        setUploadProgress,
+      );
+      if (!ok) {
+        setError(typeof data.detail === "string" ? data.detail : `Import failed (${status})`);
+        return;
+      }
+      applyResult(data as ImportResult);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Import failed");
     } finally {
       setLoading(false);
+      setUploadProgress(null);
     }
   };
 
@@ -148,6 +185,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
     setPathSelectedFile(null);
     setResult(null);
     setError(null);
+    setUploadProgress(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
     if (pathFileInputRef.current) pathFileInputRef.current.value = "";
   };
@@ -277,6 +315,30 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
                   {pathSelectedFile ? pathSelectedFile.name : "Choose file"}
                 </div>
               </>
+            )}
+            {loading && (
+              <div style={{ marginBottom: 16 }}>
+                <p style={{ margin: "0 0 6px", fontSize: 13, color: "var(--text-muted)" }}>
+                  {uploadProgress !== null ? `Uploading... ${uploadProgress}%` : "Processing import..."}
+                </p>
+                <div
+                  style={{
+                    height: 8,
+                    borderRadius: 4,
+                    backgroundColor: "var(--border)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      width: uploadProgress !== null ? `${uploadProgress}%` : "100%",
+                      backgroundColor: "var(--accent)",
+                      transition: "width 0.2s ease-out",
+                    }}
+                  />
+                </div>
+              </div>
             )}
             {error && (
               <p style={{ margin: "0 0 12px", color: "var(--error)", fontSize: 14 }}>{error}</p>
