@@ -187,3 +187,90 @@ def test_run_report_integration(client, project_id, subnet_id, host_id):
     data = r.json()
     assert "rows" in data
     assert data["report_type"] == "open_ports"
+
+
+# ---- Report Builder (service_current) filter DSL and mission scoping ----
+
+def test_report_builder_filter_compilation():
+    """Filter DSL compiles to parameterized conditions (no raw SQL from UI)."""
+    from app.services.report_builder_service import _compile_filters
+    from app.schemas.report import ReportFilterDSL, PortFilter, ReportDefinition
+
+    # Empty filters
+    conditions, params = _compile_filters([])
+    assert conditions == []
+    assert params == {}
+
+    # Port eq
+    conditions, params = _compile_filters([ReportFilterDSL(port=443)])
+    assert any("port =" in c for c in conditions)
+    assert any(443 == v for v in params.values())
+
+    # Port not_in
+    conditions, params = _compile_filters([ReportFilterDSL(port=PortFilter(not_in=[80, 443]))])
+    assert any("NOT" in c and "port" in c for c in conditions)
+    assert any(v == [80, 443] for v in params.values())
+
+    # State and has_http
+    conditions, params = _compile_filters([
+        ReportFilterDSL(state="open"),
+        ReportFilterDSL(has_http=True),
+    ])
+    assert any("state =" in c for c in conditions)
+    assert any("screenshot_path IS NOT NULL" in c or "latest_http_title" in c for c in conditions)
+
+    # title_contains and org_contains (ILIKE)
+    conditions, params = _compile_filters([
+        ReportFilterDSL(title_contains="admin"),
+        ReportFilterDSL(org_contains="Amazon"),
+    ])
+    assert any("latest_http_title ILIKE" in c for c in conditions)
+    assert any("asn_description" in c or "network_name" in c for c in conditions)
+    assert "%admin%" in params.values() or any("%admin%" in str(v) for v in params.values())
+    assert "%Amazon%" in params.values() or any("%Amazon%" in str(v) for v in params.values())
+
+
+def test_report_builder_mission_scoping(client, project_id):
+    """Execute report is mission-scoped: only project_id filter is applied server-side."""
+    # Execute with empty definition (no filters) - should return columns and rows for this project only
+    r = client.post(
+        f"/api/projects/{project_id}/reports/execute",
+        json={
+            "definition": {
+                "filters": [],
+                "columns": ["host_ip", "port", "state", "service_name"],
+                "sort": {"column": "host_ip", "descending": False},
+                "limit": 10,
+                "offset": 0,
+            },
+        },
+    )
+    # May 200 with empty rows if no ports, or 200 with data; never data from another project
+    assert r.status_code == 200
+    data = r.json()
+    assert "columns" in data
+    assert "rows" in data
+    assert "total_count" in data
+    assert data["columns"] == ["host_ip", "port", "state", "service_name"]
+
+
+def test_report_builder_execute_non_standard_ports(client, project_id):
+    """Execute with filter: port NOT IN [80, 443] (non-standard ports)."""
+    r = client.post(
+        f"/api/projects/{project_id}/reports/execute",
+        json={
+            "definition": {
+                "filters": [{"port": {"not_in": [80, 443]}}],
+                "columns": ["host_ip", "port", "state"],
+                "limit": 100,
+                "offset": 0,
+            },
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert "rows" in data
+    # All returned rows should have port not in (80, 443) if any
+    for row in data["rows"]:
+        if "port" in row and row["port"] is not None:
+            assert row["port"] not in (80, 443)

@@ -1,10 +1,13 @@
+import csv
+import io
 import os
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.admin_deps import require_admin
@@ -506,6 +509,30 @@ def import_from_path(
     raise HTTPException(status_code=400, detail="Path must be a file or a directory.")
 
 
+def _saved_report_to_read(sr: SavedReport) -> SavedReportRead:
+    definition = None
+    if getattr(sr, "definition_json", None):
+        try:
+            definition = ReportDefinition.model_validate(sr.definition_json)
+        except Exception:
+            pass
+    return SavedReportRead(
+        id=sr.id,
+        project_id=sr.project_id,
+        name=sr.name,
+        description=sr.description,
+        query_definition=SavedReportQueryDefinition(
+            data_source=sr.data_source,
+            columns=sr.columns or [],
+            filter_expression=sr.filter_expression or "",
+        ),
+        definition=definition,
+        created_at=sr.created_at,
+        updated_at=getattr(sr, "updated_at", None),
+        created_by_user_id=getattr(sr, "created_by_user_id", None),
+    )
+
+
 # Service-current column labels for Report Builder (service_current view)
 SERVICE_CURRENT_COLUMN_LABELS = {
     "host_ip": "Host IP",
@@ -635,32 +662,7 @@ def list_saved_reports(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     reports = db.query(SavedReport).filter(SavedReport.project_id == project_id).order_by(SavedReport.created_at.desc()).all()
-    out = []
-    for r in reports:
-        definition = None
-        if r.definition_json:
-            try:
-                definition = ReportDefinition.model_validate(r.definition_json)
-            except Exception:
-                pass
-        out.append(
-            SavedReportRead(
-                id=r.id,
-                project_id=r.project_id,
-                name=r.name,
-                description=r.description,
-                query_definition=SavedReportQueryDefinition(
-                    data_source=r.data_source,
-                    columns=r.columns or [],
-                    filter_expression=r.filter_expression or "",
-                ),
-                definition=definition,
-                created_at=r.created_at,
-                updated_at=r.updated_at,
-                created_by_user_id=r.created_by_user_id,
-            )
-        )
-    return out
+    return [_saved_report_to_read(r) for r in reports]
 
 
 @router.post("/{project_id}/reports/saved", response_model=SavedReportRead, status_code=201)
@@ -720,6 +722,109 @@ def create_saved_report_v2(
     return _saved_report_to_read(sr)
 
 
+@router.put("/{project_id}/reports/saved/{report_id}", response_model=SavedReportRead)
+def update_saved_report(
+    project_id: UUID,
+    report_id: UUID,
+    body: SavedReportUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update a saved report (name, description, definition)."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    sr = db.query(SavedReport).filter(SavedReport.id == report_id, SavedReport.project_id == project_id).first()
+    if not sr:
+        raise HTTPException(status_code=404, detail="Saved report not found")
+    if body.name is not None:
+        sr.name = body.name
+    if body.description is not None:
+        sr.description = body.description
+    if body.definition is not None:
+        sr.definition_json = body.definition.model_dump(mode="json")
+        sr.data_source = "service_current"
+        sr.columns = body.definition.columns or []
+        sr.filter_expression = None
+    sr.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(sr)
+    return _saved_report_to_read(sr)
+
+
+@router.delete("/{project_id}/reports/saved/{report_id}", status_code=204)
+def delete_saved_report(
+    project_id: UUID,
+    report_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a saved report."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    sr = db.query(SavedReport).filter(SavedReport.id == report_id, SavedReport.project_id == project_id).first()
+    if not sr:
+        raise HTTPException(status_code=404, detail="Saved report not found")
+    db.delete(sr)
+    db.commit()
+    return None
+
+
+@router.get("/{project_id}/reports/saved/{report_id}/export")
+def export_saved_report(
+    project_id: UUID,
+    report_id: UUID,
+    format: str = "csv",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Run saved report and export as CSV or JSON. format=csv|json."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    sr = db.query(SavedReport).filter(SavedReport.id == report_id, SavedReport.project_id == project_id).first()
+    if not sr:
+        raise HTTPException(status_code=404, detail="Saved report not found")
+    if sr.definition_json:
+        try:
+            definition = ReportDefinition.model_validate(sr.definition_json)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid saved definition")
+        columns, rows, _ = execute_report(db, project_id, definition)
+    else:
+        try:
+            rows = run_builder(db, project_id, sr.data_source, sr.columns or [], sr.filter_expression or "")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        columns = list(rows[0].keys()) if rows else []
+    format_lower = (format or "csv").strip().lower()
+    if format_lower == "json":
+        buf = io.BytesIO()
+        import json
+        buf.write(json.dumps({"columns": columns, "rows": rows}, default=str).encode("utf-8"))
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{sr.name.replace(" ", "-")}.json"'},
+        )
+    if format_lower == "csv":
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(columns)
+        for r in rows:
+            writer.writerow([r.get(c) for c in columns])
+        out = io.BytesIO(buf.getvalue().encode("utf-8-sig"))
+        out.seek(0)
+        return StreamingResponse(
+            out,
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{sr.name.replace(" ", "-")}.csv"'},
+        )
+    raise HTTPException(status_code=400, detail="format must be csv or json")
+
+
 @router.post("/{project_id}/reports/saved/{report_id}/run", response_model=ReportRunResponse)
 def run_saved_report(
     project_id: UUID,
@@ -735,6 +840,18 @@ def run_saved_report(
     sr = db.query(SavedReport).filter(SavedReport.id == report_id, SavedReport.project_id == project_id).first()
     if not sr:
         raise HTTPException(status_code=404, detail="Saved report not found")
+    if sr.definition_json:
+        try:
+            definition = ReportDefinition.model_validate(sr.definition_json)
+            columns, rows, total_count = execute_report(db, project_id, definition)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return ReportRunResponse(
+            report_type="saved",
+            report_name=sr.name,
+            rows=rows,
+            count=total_count,
+        )
     try:
         rows = run_builder(db, project_id, sr.data_source, sr.columns or [], sr.filter_expression or "")
     except ValueError as e:

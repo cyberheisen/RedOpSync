@@ -290,9 +290,12 @@ def _import_one_project(
                 project_id=new_project_id,
                 name=sr["name"],
                 description=sr.get("description"),
-                data_source=sr["data_source"],
+                data_source=sr.get("data_source", "service_current"),
                 columns=sr.get("columns", []),
                 filter_expression=sr.get("filter_expression"),
+                definition_json=sr.get("definition_json"),
+                created_by_user_id=None,
+                updated_at=_parse_dt(sr.get("updated_at")) if sr.get("updated_at") else None,
             )
         )
     db.flush()

@@ -1,0 +1,28 @@
+[
+  {
+    "name": "Non-standard ports (not 80/443)",
+    "description": "Open ports that are not 80 or 443",
+    "definition": {
+      "filters": [
+        { "port": { "not_in": [80, 443] }, "state": "open" }
+      ],
+      "columns": ["host_ip", "port", "proto", "state", "service_name", "latest_http_title", "whois_asn"],
+      "sort": { "column": "host_ip", "descending": false },
+      "limit": 500,
+      "offset": 0
+    }
+  },
+  {
+    "name": "Port 80 with banners",
+    "description": "Port 80 with HTTP banners and page titles",
+    "definition": {
+      "filters": [
+        { "port": 80, "has_http": true }
+      ],
+      "columns": ["host_ip", "port", "state", "latest_http_title", "latest_http_server", "latest_http_status_code"],
+      "sort": { "column": "host_ip", "descending": false },
+      "limit": 500,
+      "offset": 0
+    }
+  }
+]
