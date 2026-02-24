@@ -22,7 +22,7 @@ import { RenameHostModal } from "../../components/rename-host-modal";
 import { RenameSubnetModal } from "../../components/rename-subnet-modal";
 import { StubModal } from "../../components/stub-modal";
 import { CustomReportsPanel } from "../../components/custom-reports-panel";
-import { ReportBuilderPanel } from "../../components/report-builder-panel";
+import { ReportsPage } from "../../components/reporting/ReportsPage";
 import { ToolsDecoderPanel } from "../../components/tools-decoder-panel";
 import { ToolsDiffPanel } from "../../components/tools-diff-panel";
 import { ToolsDeduplicationPanel } from "../../components/tools-deduplication-panel";
@@ -3155,7 +3155,7 @@ export default function MissionDetailPage() {
     if (selectedNode.type === "custom-reports")
       return <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 14 }}>Select Report builder, Predefined reports, or a saved report from the list.</div>;
     if (selectedNode.type === "report-builder")
-      return <ReportBuilderPanel projectId={missionId} onToast={setToast} savedReports={savedReports} onSavedReportsChange={loadSavedReports} />;
+      return <ReportsPage projectId={missionId} onToast={setToast} />;
     if (selectedNode.type === "predefined-reports")
       return <CustomReportsPanel projectId={missionId} subnets={subnets} onToast={setToast} savedReports={savedReports} onSavedReportsChange={loadSavedReports} mode="predefined" />;
     if (selectedNode.type === "saved-report") {

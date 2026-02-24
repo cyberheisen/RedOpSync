@@ -46,6 +46,7 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
   const [mode, setMode] = useState<ImportMode>("upload");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [serverFiles, setServerFiles] = useState<ServerFileEntry[]>([]);
+  const [serverImportDirectory, setServerImportDirectory] = useState<string | null>(null);
   const [serverFilesLoading, setServerFilesLoading] = useState(false);
   const [selectedServerPath, setSelectedServerPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -74,8 +75,14 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
     setError(null);
     fetch(apiUrl(`/api/projects/${projectId}/import-from-path/files`), { credentials: "include" })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Failed to list files"))))
-      .then((data: { files: ServerFileEntry[] }) => setServerFiles(data.files ?? []))
-      .catch(() => setServerFiles([]))
+      .then((data: { directory?: string; files?: ServerFileEntry[] }) => {
+        setServerImportDirectory(data.directory ?? null);
+        setServerFiles(data.files ?? []);
+      })
+      .catch(() => {
+        setServerImportDirectory(null);
+        setServerFiles([]);
+      })
       .finally(() => setServerFilesLoading(false));
   }, [mode, projectId]);
 
@@ -388,7 +395,9 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
             ) : (
               <>
                 <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--text-muted)" }}>
-                  Files in the server import directory ({serverFilesLoading ? "loading…" : "select one to import"})
+                  {serverFilesLoading ? "Loading…" : serverImportDirectory
+                    ? `Server directory: ${serverImportDirectory} — select one to import`
+                    : "Select a file or folder from the server to import"}
                 </p>
                 <div
                   style={{
@@ -404,9 +413,15 @@ export function ImportHostsModal({ projectId, context, onClose, onSuccess }: Pro
                       Loading…
                     </p>
                   ) : serverFiles.length === 0 ? (
-                    <p style={{ padding: 16, margin: 0, color: "var(--text-muted)", fontSize: 13 }}>
-                      No importable files or folders. Add files to the server import directory (see IMPORT_FROM_PATH_DIR).
-                    </p>
+                    <div style={{ padding: 16, color: "var(--text-muted)", fontSize: 13 }}>
+                      <p style={{ margin: "0 0 8px" }}>No importable files or folders.</p>
+                      <p style={{ margin: 0 }}>
+                        The API lists from: <strong>{serverImportDirectory ?? "IMPORT_FROM_PATH_DIR"}</strong>. Only
+                        files with extensions .xml, .zip, .txt, .json, .masscan, .lst and subdirectories are shown. If
+                        you use Docker, this path is inside the container — put files in a mounted volume or copy
+                        into the container (e.g. <code style={{ fontSize: 12 }}>docker cp myfile.zip api:/tmp/</code>).
+                      </p>
+                    </div>
                   ) : (
                     <ul style={{ margin: 0, padding: "8px 0", listStyle: "none" }}>
                       {serverFiles.map((f) => (

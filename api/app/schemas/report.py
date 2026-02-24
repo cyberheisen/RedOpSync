@@ -1,4 +1,6 @@
 """Schemas for custom reports."""
+from __future__ import annotations
+
 from datetime import datetime
 from uuid import UUID
 
@@ -93,6 +95,7 @@ class SavedReportRead(BaseModel):
     description: str | None
     query_definition: SavedReportQueryDefinition
     definition: ReportDefinition | None = None
+    definition_json: dict | None = None
     created_at: datetime
     updated_at: datetime | None = None
     created_by_user_id: UUID | None = None
@@ -156,3 +159,64 @@ class ReportBuilderRequest(BaseModel):
     data_source: str = Field(..., description="hosts | ports | evidence | vulns")
     columns: list[str] = Field(..., description="Column IDs to include")
     filter_expression: str = Field("", description="Filter using tree filter syntax")
+
+
+# ---- Visual Report Builder: nested Group/Condition DSL ----
+
+class ReportCondition(BaseModel):
+    """Single condition: field, operator, optional value."""
+    field: str
+    operator: str
+    value: str | int | float | bool | list[str] | list[int] | None = None
+
+
+class ReportGroup(BaseModel):
+    """Nested group: AND or OR over children (groups or conditions)."""
+    op: str = Field(..., pattern="^(AND|OR)$")
+    children: list[ReportGroup | ReportCondition] = Field(default_factory=list)
+
+
+class ReportColumnSpec(BaseModel):
+    """Column with optional label (for display)."""
+    key: str
+    label: str | None = None
+
+
+class ReportSortItem(BaseModel):
+    """Sort by key and direction."""
+    key: str
+    direction: str = Field(..., pattern="^(asc|desc)$")
+
+
+class ReportDefinitionV2(BaseModel):
+    """Visual Report Builder definition: sources, columns, sort, filter (nested)."""
+    sources: list[str] = Field(default_factory=list)
+    columns: list[ReportColumnSpec] = Field(default_factory=list)
+    sort: list[ReportSortItem] = Field(default_factory=list)
+    filter: ReportGroup | None = None
+    limit: int = Field(default=500, ge=1, le=10000)
+    offset: int = Field(default=0, ge=0)
+
+
+class ReportingExecuteRequest(BaseModel):
+    """Request to execute report (ReportDefinitionV2)."""
+    definition: ReportDefinitionV2
+
+
+class ReportingFieldsResponse(BaseModel):
+    """Field metadata for selected sources."""
+    fields: list[dict]
+
+
+class SavedReportCreateV3(BaseModel):
+    """Create a saved report (Visual Report Builder: ReportDefinitionV2)."""
+    name: str = Field(..., min_length=1, max_length=255)
+    description: str | None = None
+    definition: ReportDefinitionV2
+
+
+class SavedReportUpdateV2(BaseModel):
+    """Update a saved report (accepts ReportDefinitionV2)."""
+    name: str | None = Field(None, min_length=1, max_length=255)
+    description: str | None = None
+    definition: ReportDefinitionV2 | None = None

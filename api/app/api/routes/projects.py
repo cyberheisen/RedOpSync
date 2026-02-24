@@ -31,14 +31,23 @@ from app.schemas.report import (
     SavedReportUpdate,
     SavedReportQueryDefinition,
     ReportDefinition,
+    ReportDefinitionV2,
     ExecuteReportRequest,
     ExecuteReportResponse,
+    ReportingExecuteRequest,
+    ReportingFieldsResponse,
+    SavedReportCreateV3,
+    SavedReportUpdateV2,
 )
 from app.services.audit import log_audit
 from app.services.report_builder_service import (
     execute_report,
     SERVICE_CURRENT_COLUMNS,
     SELECT_COLUMN_EXPRESSIONS,
+)
+from app.services.reporting_service import (
+    get_fields_for_sources,
+    execute_report_v2,
 )
 from app.db.session import SessionLocal
 from app.services.import_dispatcher import run_import, run_gowitness_import_from_path
@@ -368,7 +377,7 @@ def list_import_from_path_files(
     base = Path(settings.import_from_path_dir).resolve()
     base.mkdir(parents=True, exist_ok=True)
     if not base.is_dir():
-        return {"files": []}
+        return {"directory": str(base), "files": []}
     files: list[dict] = []
     try:
         for entry in sorted(base.iterdir()):
@@ -384,7 +393,7 @@ def list_import_from_path_files(
     except OSError as e:
         logger.warning("List import dir failed: %s", e)
         raise HTTPException(status_code=500, detail="Could not list import directory")
-    return {"files": files}
+    return {"directory": str(base), "files": files}
 
 
 def _run_import_job(
@@ -676,6 +685,7 @@ def _saved_report_to_read(sr: SavedReport) -> SavedReportRead:
             filter_expression=sr.filter_expression or "",
         ),
         definition=definition,
+        definition_json=getattr(sr, "definition_json", None),
         created_at=sr.created_at,
         updated_at=getattr(sr, "updated_at", None),
         created_by_user_id=getattr(sr, "created_by_user_id", None),
@@ -740,6 +750,113 @@ def get_service_current_columns(
             for cid in sorted(SELECT_COLUMN_EXPRESSIONS.keys())
         ],
     }
+
+
+@router.get("/{project_id}/reporting/fields", response_model=ReportingFieldsResponse)
+def get_reporting_fields(
+    project_id: UUID,
+    sources: str = "",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get field metadata for selected sources (e.g. ?sources=core,nmap,http). Mission-scoped."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    source_list = [s.strip() for s in sources.split(",") if s.strip()]
+    fields = get_fields_for_sources(source_list)
+    return ReportingFieldsResponse(fields=fields)
+
+
+@router.post("/{project_id}/reporting/execute", response_model=ExecuteReportResponse)
+def execute_reporting(
+    project_id: UUID,
+    body: ReportingExecuteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Execute Report Builder definition (Group/Condition DSL). Mission-scoped."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        columns, rows, total_count = execute_report_v2(db, project_id, body.definition)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return ExecuteReportResponse(columns=columns, rows=rows, total_count=total_count)
+
+
+# Example report definitions for seed
+REPORTING_SEED_EXAMPLES = [
+    {
+        "name": "Ports not 80/443",
+        "description": "Open ports that are not 80 or 443",
+        "definition": {
+            "sources": ["core", "nmap", "http", "gowitness", "whois"],
+            "columns": [{"key": "host_ip", "label": "IP"}, {"key": "port", "label": "Port"}, {"key": "proto", "label": "Proto"}, {"key": "state", "label": "State"}, {"key": "service_name", "label": "Service name"}, {"key": "latest_http_title", "label": "HTTP title"}, {"key": "whois_asn", "label": "ASN"}],
+            "sort": [{"key": "host_ip", "direction": "asc"}],
+            "filter": {"op": "AND", "children": [{"field": "port", "operator": "not_in_list", "value": [80, 443]}, {"field": "state", "operator": "equals", "value": "open"}]},
+            "limit": 500,
+            "offset": 0,
+        },
+    },
+    {
+        "name": "Port 80 with banners",
+        "description": "Port 80 with HTTP banners and page titles",
+        "definition": {
+            "sources": ["core", "nmap", "http", "gowitness", "whois"],
+            "columns": [{"key": "host_ip", "label": "IP"}, {"key": "port", "label": "Port"}, {"key": "state", "label": "State"}, {"key": "latest_http_title", "label": "HTTP title"}, {"key": "latest_http_server", "label": "Server"}, {"key": "latest_http_status_code", "label": "Status code"}],
+            "sort": [{"key": "host_ip", "direction": "asc"}],
+            "filter": {"op": "AND", "children": [{"field": "port", "operator": "equals", "value": 80}, {"field": "has_http", "operator": "is_true"}]},
+            "limit": 500,
+            "offset": 0,
+        },
+    },
+    {
+        "name": "Only risky admin ports",
+        "description": "Common admin/management ports (22, 3389, 445, etc.)",
+        "definition": {
+            "sources": ["core", "nmap", "http", "gowitness", "whois"],
+            "columns": [{"key": "host_ip", "label": "IP"}, {"key": "port", "label": "Port"}, {"key": "state", "label": "State"}, {"key": "service_name", "label": "Service name"}, {"key": "whois_org", "label": "ASN Org"}],
+            "sort": [{"key": "port", "direction": "asc"}, {"key": "host_ip", "direction": "asc"}],
+            "filter": {"op": "AND", "children": [{"field": "port", "operator": "in_list", "value": [22, 3389, 445, 1433, 3306, 6379, 9200, 5601, 8080, 8443]}]},
+            "limit": 500,
+            "offset": 0,
+        },
+    },
+]
+
+
+@router.post("/{project_id}/reporting/seed-examples")
+def seed_reporting_examples(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create 3 example saved reports if none exist with these names. Mission-scoped."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    existing_names = {r.name for r in db.query(SavedReport).filter(SavedReport.project_id == project_id).all()}
+    created = 0
+    for ex in REPORTING_SEED_EXAMPLES:
+        if ex["name"] in existing_names:
+            continue
+        sr = SavedReport(
+            project_id=project_id,
+            name=ex["name"],
+            description=ex.get("description"),
+            data_source="service_current",
+            columns=[c["key"] for c in ex["definition"].get("columns", [])],
+            filter_expression=None,
+            definition_json=ex["definition"],
+            created_by_user_id=current_user.id,
+        )
+        db.add(sr)
+        created += 1
+        existing_names.add(ex["name"])
+    db.commit()
+    return {"created": created}
 
 
 @router.post("/{project_id}/reports/builder", response_model=ReportRunResponse)
@@ -871,6 +988,35 @@ def create_saved_report_v2(
     return _saved_report_to_read(sr)
 
 
+@router.post("/{project_id}/reports/saved/v3", response_model=SavedReportRead, status_code=201)
+def create_saved_report_v3(
+    project_id: UUID,
+    body: SavedReportCreateV3,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Save a report definition (Visual Report Builder: ReportDefinitionV2 with Group/Condition filter)."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    defn = body.definition
+    column_keys = [c.key for c in (defn.columns or [])]
+    sr = SavedReport(
+        project_id=project_id,
+        name=body.name,
+        description=body.description,
+        data_source="service_current",
+        columns=column_keys or [],
+        filter_expression=None,
+        definition_json=defn.model_dump(mode="json"),
+        created_by_user_id=current_user.id,
+    )
+    db.add(sr)
+    db.commit()
+    db.refresh(sr)
+    return _saved_report_to_read(sr)
+
+
 @router.put("/{project_id}/reports/saved/{report_id}", response_model=SavedReportRead)
 def update_saved_report(
     project_id: UUID,
@@ -879,7 +1025,7 @@ def update_saved_report(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Update a saved report (name, description, definition)."""
+    """Update a saved report (name, description, definition - legacy ReportDefinition)."""
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -894,6 +1040,37 @@ def update_saved_report(
         sr.definition_json = body.definition.model_dump(mode="json")
         sr.data_source = "service_current"
         sr.columns = body.definition.columns or []
+        sr.filter_expression = None
+    sr.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(sr)
+    return _saved_report_to_read(sr)
+
+
+@router.put("/{project_id}/reports/saved/{report_id}/v2", response_model=SavedReportRead)
+def update_saved_report_v2(
+    project_id: UUID,
+    report_id: UUID,
+    body: SavedReportUpdateV2,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update a saved report (Visual Report Builder: ReportDefinitionV2)."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    sr = db.query(SavedReport).filter(SavedReport.id == report_id, SavedReport.project_id == project_id).first()
+    if not sr:
+        raise HTTPException(status_code=404, detail="Saved report not found")
+    if body.name is not None:
+        sr.name = body.name
+    if body.description is not None:
+        sr.description = body.description
+    if body.definition is not None:
+        defn = body.definition
+        sr.definition_json = defn.model_dump(mode="json")
+        sr.data_source = "service_current"
+        sr.columns = [c.key for c in (defn.columns or [])]
         sr.filter_expression = None
     sr.updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -937,10 +1114,15 @@ def export_saved_report(
         raise HTTPException(status_code=404, detail="Saved report not found")
     if sr.definition_json:
         try:
-            definition = ReportDefinition.model_validate(sr.definition_json)
+            d = sr.definition_json
+            if isinstance(d.get("filter"), dict) and "op" in d.get("filter", {}) and "children" in d.get("filter", {}):
+                definition_v2 = ReportDefinitionV2.model_validate(d)
+                columns, rows, _ = execute_report_v2(db, project_id, definition_v2)
+            else:
+                definition = ReportDefinition.model_validate(d)
+                columns, rows, _ = execute_report(db, project_id, definition)
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid saved definition")
-        columns, rows, _ = execute_report(db, project_id, definition)
     else:
         try:
             rows = run_builder(db, project_id, sr.data_source, sr.columns or [], sr.filter_expression or "")
@@ -991,8 +1173,13 @@ def run_saved_report(
         raise HTTPException(status_code=404, detail="Saved report not found")
     if sr.definition_json:
         try:
-            definition = ReportDefinition.model_validate(sr.definition_json)
-            columns, rows, total_count = execute_report(db, project_id, definition)
+            d = sr.definition_json
+            if isinstance(d.get("filter"), dict) and "op" in d.get("filter", {}) and "children" in d.get("filter", {}):
+                definition_v2 = ReportDefinitionV2.model_validate(d)
+                columns, rows, total_count = execute_report_v2(db, project_id, definition_v2)
+            else:
+                definition = ReportDefinition.model_validate(d)
+                columns, rows, total_count = execute_report(db, project_id, definition)
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
         return ReportRunResponse(
