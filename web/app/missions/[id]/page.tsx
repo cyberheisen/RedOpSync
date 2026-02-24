@@ -3157,7 +3157,7 @@ export default function MissionDetailPage() {
     if (selectedNode.type === "report-builder")
       return <ReportsPage projectId={missionId} onToast={setToast} />;
     if (selectedNode.type === "predefined-reports")
-      return <CustomReportsPanel projectId={missionId} subnets={subnets} onToast={setToast} savedReports={savedReports} onSavedReportsChange={loadSavedReports} mode="predefined" />;
+      return <CustomReportsPanel projectId={missionId} subnets={subnets} onToast={setToast} savedReports={savedReports} onSavedReportsChange={loadSavedReports} mode="all" />;
     if (selectedNode.type === "saved-report") {
       const sr = savedReports.find((r) => r.id === selectedNode.id);
       if (!sr) return <div style={{ padding: 24, color: "var(--text-muted)" }}>Saved report not found.</div>;
