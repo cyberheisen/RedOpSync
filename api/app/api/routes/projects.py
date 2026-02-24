@@ -16,9 +16,9 @@ from app.core.admin_deps import require_admin
 from app.core.config import settings
 from app.core.deps import get_current_user
 from app.db.session import get_db
-from app.models.models import AuditEvent, ItemTag, Lock, Project, SavedReport, Tag, User
+from app.models.models import AuditEvent, Evidence, Host, ItemTag, Lock, Port, Project, SavedReport, Tag, User, VulnerabilityDefinition
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectSortModeUpdate, ImportFromPathBody
-from app.schemas.tag import TagCreate, TagRead, ItemTagCreate, ItemTagRead
+from app.schemas.tag import TagCreate, TagRead, ItemTagCreate, ItemTagRead, ItemTagBulkCreate, ItemTagBulkResponse
 from app.schemas.report import (
     ReportRunRequest,
     ReportRunResponse,
@@ -1404,6 +1404,61 @@ def add_item_tag(
         tag_name=tag.name,
         tag_color=tag.color,
     )
+
+
+def _target_belongs_to_project(db: Session, project_id: UUID, target_type: str, target_id: UUID) -> bool:
+    """Return True if the target entity exists and belongs to the project."""
+    if target_type == "host":
+        return db.query(Host).filter(Host.id == target_id, Host.project_id == project_id).first() is not None
+    if target_type == "port":
+        port = db.query(Port).filter(Port.id == target_id).first()
+        if not port:
+            return False
+        host = db.query(Host).filter(Host.id == port.host_id, Host.project_id == project_id).first()
+        return host is not None
+    if target_type == "port_evidence":
+        return db.query(Evidence).filter(Evidence.id == target_id, Evidence.project_id == project_id).first() is not None
+    if target_type == "vuln_definition":
+        return db.query(VulnerabilityDefinition).filter(
+            VulnerabilityDefinition.id == target_id, VulnerabilityDefinition.project_id == project_id
+        ).first() is not None
+    return False
+
+
+@router.post("/{project_id}/item-tags/bulk", response_model=ItemTagBulkResponse)
+def add_item_tags_bulk(
+    project_id: UUID,
+    body: ItemTagBulkCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Apply one tag to many targets. Idempotent: skips assignments that already exist."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    tag = db.query(Tag).filter(Tag.id == body.tag_id, Tag.project_id == project_id).first()
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    created = 0
+    skipped = 0
+    for a in body.assignments:
+        if not _target_belongs_to_project(db, project_id, a.target_type, a.target_id):
+            continue
+        existing = (
+            db.query(ItemTag)
+            .filter(
+                ItemTag.tag_id == body.tag_id,
+                ItemTag.target_type == a.target_type,
+                ItemTag.target_id == a.target_id,
+            )
+        ).first()
+        if existing:
+            skipped += 1
+        else:
+            db.add(ItemTag(tag_id=body.tag_id, target_type=a.target_type, target_id=a.target_id))
+            created += 1
+    db.commit()
+    return ItemTagBulkResponse(created=created, skipped=skipped)
 
 
 @router.delete("/{project_id}/item-tags/{item_tag_id}", status_code=204)

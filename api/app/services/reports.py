@@ -571,6 +571,8 @@ def _run_builder(
                 row["whois_type"] = w.get("network_type")
             if "whois_registry" in cols:
                 row["whois_registry"] = w.get("asn_registry")
+            row["_target_type"] = "host"
+            row["_target_id"] = str(h.id)
             rows.append(row)
         return rows
 
@@ -598,6 +600,8 @@ def _run_builder(
                 row["service"] = p.service_name
             if "state" in cols:
                 row["state"] = p.state
+            row["_target_type"] = "port"
+            row["_target_id"] = str(p.id)
             rows.append(row)
         return rows
 
@@ -628,6 +632,8 @@ def _run_builder(
                 row["imported_at"] = ev.imported_at.isoformat() if ev.imported_at else None
             if "source_timestamp" in cols:
                 row["source_timestamp"] = ev.source_timestamp
+            row["_target_type"] = "port_evidence"
+            row["_target_id"] = str(ev.id)
             rows.append(row)
         return rows
 
@@ -654,6 +660,8 @@ def _run_builder(
                 row["host_dns"] = h.dns_name
             if "status" in cols:
                 row["status"] = vi.status
+            row["_target_type"] = "vuln_definition"
+            row["_target_id"] = str(vd.id)
             rows.append(row)
         return rows
 

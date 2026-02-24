@@ -28,6 +28,23 @@ class ItemTagCreate(BaseModel):
     target_id: UUID
 
 
+class ItemTagAssignment(BaseModel):
+    """One target for bulk tag assignment."""
+
+    target_type: str = Field(..., pattern="^(host|port|port_evidence|vuln_definition)$")
+    target_id: UUID
+
+
+class ItemTagBulkCreate(BaseModel):
+    tag_id: UUID
+    assignments: list[ItemTagAssignment]
+
+
+class ItemTagBulkResponse(BaseModel):
+    created: int
+    skipped: int
+
+
 class ItemTagRead(BaseModel):
     id: UUID
     tag_id: UUID

@@ -95,6 +95,13 @@ export function CustomReportsPanel({ projectId, subnets, onToast, savedReports =
   const [builderLoading, setBuilderLoading] = useState(false);
   const [builderError, setBuilderError] = useState("");
   const [builderExportFormat, setBuilderExportFormat] = useState<"txt" | "csv" | "json">("txt");
+  const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  const [tagBulkMode, setTagBulkMode] = useState<"all" | "selected">("all");
+  const [builderTags, setBuilderTags] = useState<{ id: string; name: string; color: string | null }[]>([]);
+  const [tagPickerLoading, setTagPickerLoading] = useState(false);
+  const [tagApplyLoading, setTagApplyLoading] = useState(false);
+  const [selectedTagIdForBulk, setSelectedTagIdForBulk] = useState<string>("");
+  const [selectedBuilderRowIndices, setSelectedBuilderRowIndices] = useState<number[]>([]);
 
   const [configs, setConfigs] = useState<ReportConfig[]>([]);
   const [configsLoading, setConfigsLoading] = useState(true);
@@ -144,6 +151,30 @@ export function CustomReportsPanel({ projectId, subnets, onToast, savedReports =
     }
   }, [builderDataSource, builderColumns]);
 
+  useEffect(() => {
+    if (!tagPickerOpen || !projectId) return;
+    setTagPickerLoading(true);
+    fetch(apiUrl(`/api/projects/${projectId}/tags`), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: { id: string; name: string; color: string | null }[]) => {
+        setBuilderTags(list);
+        setSelectedTagIdForBulk(list[0]?.id ?? "");
+      })
+      .finally(() => setTagPickerLoading(false));
+  }, [tagPickerOpen, projectId]);
+
+  const toggleBuilderRowSelection = useCallback((index: number) => {
+    setSelectedBuilderRowIndices((prev) =>
+      prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index].sort((a, b) => a - b))
+    );
+  }, []);
+  const selectAllBuilderRows = useCallback(() => {
+    setSelectedBuilderRowIndices(builderRows.map((_, i) => i));
+  }, [builderRows.length]);
+  const clearBuilderRowSelection = useCallback(() => {
+    setSelectedBuilderRowIndices([]);
+  }, []);
+
   const runBuilderReport = useCallback(() => {
     setBuilderLoading(true);
     setBuilderError("");
@@ -164,7 +195,10 @@ export function CustomReportsPanel({ projectId, subnets, onToast, savedReports =
         }
         return r.json();
       })
-      .then((data: { rows: Record<string, unknown>[] }) => setBuilderRows(data.rows ?? []))
+      .then((data: { rows: Record<string, unknown>[] }) => {
+        setBuilderRows(data.rows ?? []);
+        setSelectedBuilderRowIndices([]);
+      })
       .catch((e) => {
         setBuilderError(e instanceof Error ? e.message : "Report failed");
         setBuilderRows([]);
@@ -428,27 +462,248 @@ export function CustomReportsPanel({ projectId, subnets, onToast, savedReports =
           <button type="button" className="theme-btn" onClick={handleBuilderExport} disabled={builderRows.length === 0}>
             Export
           </button>
+          <button
+            type="button"
+            className="theme-btn"
+            disabled={builderRows.length === 0}
+            onClick={() => {
+              setTagBulkMode("all");
+              setTagPickerOpen(true);
+            }}
+          >
+            Tag all
+          </button>
+          <button
+            type="button"
+            className="theme-btn"
+            disabled={selectedBuilderRowIndices.length === 0}
+            onClick={() => {
+              setTagBulkMode("selected");
+              setTagPickerOpen(true);
+            }}
+          >
+            Tag selected
+          </button>
         </div>
+
+        {tagPickerOpen && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 1000,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: "rgba(0,0,0,0.4)",
+            }}
+            onClick={() => !tagApplyLoading && setTagPickerOpen(false)}
+          >
+            <div
+              style={{
+                background: "var(--bg-panel)",
+                border: "1px solid var(--border)",
+                borderRadius: 12,
+                padding: 20,
+                minWidth: 280,
+                maxWidth: "90vw",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h4 style={{ margin: "0 0 12px", fontSize: 14 }}>
+                {tagBulkMode === "all"
+                  ? `Apply tag to all ${builderRows.length} results`
+                  : `Apply tag to ${selectedBuilderRowIndices.length} selected results`}
+              </h4>
+              {tagPickerLoading ? (
+                <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading tags…</p>
+              ) : builderTags.length === 0 ? (
+                <p style={{ color: "var(--text-muted)", fontSize: 13 }}>No tags. Create tags in the Mission first.</p>
+              ) : (
+                <>
+                  <select
+                    value={selectedTagIdForBulk}
+                    onChange={(e) => setSelectedTagIdForBulk(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "8px 10px",
+                      borderRadius: 6,
+                      border: "1px solid var(--border)",
+                      background: "var(--bg)",
+                      color: "var(--text)",
+                      fontSize: 13,
+                      marginBottom: 16,
+                    }}
+                  >
+                    {builderTags.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                    <button
+                      type="button"
+                      className="theme-btn theme-btn-ghost"
+                      disabled={tagApplyLoading}
+                      onClick={() => setTagPickerOpen(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="theme-btn theme-btn-primary"
+                      disabled={tagApplyLoading}
+                      onClick={() => {
+                        const tagId = selectedTagIdForBulk;
+                        if (!tagId) return;
+                        const rowsToTag =
+                          tagBulkMode === "all"
+                            ? builderRows
+                            : builderRows.filter((_, i) => selectedBuilderRowIndices.includes(i));
+                        const assignments = rowsToTag
+                          .map((r) => ({
+                            target_type: r._target_type as string,
+                            target_id: r._target_id as string,
+                          }))
+                          .filter((a) => a.target_id);
+                        if (assignments.length === 0) {
+                          onToast?.("No valid targets to tag");
+                          return;
+                        }
+                        setTagApplyLoading(true);
+                        fetch(apiUrl(`/api/projects/${projectId}/item-tags/bulk`), {
+                          method: "POST",
+                          credentials: "include",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ tag_id: tagId, assignments }),
+                        })
+                          .then(async (r) => {
+                            if (!r.ok) {
+                              const d = await r.json().catch(() => ({}));
+                              throw new Error(formatApiErrorDetail(d?.detail, "Tag apply failed"));
+                            }
+                            return r.json();
+                          })
+                          .then((data: { created: number; skipped: number }) => {
+                            setTagPickerOpen(false);
+                            if (data.skipped > 0) {
+                              onToast?.(`Tag applied: ${data.created} created, ${data.skipped} already had tag`);
+                            } else {
+                              onToast?.(`Tag applied to ${data.created} items`);
+                            }
+                          })
+                          .catch((e) => onToast?.(e instanceof Error ? e.message : "Tag apply failed"))
+                          .finally(() => setTagApplyLoading(false));
+                      }}
+                    >
+                      {tagApplyLoading ? "Applying…" : "Apply"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         <div>
           <label style={{ display: "block", fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>Preview</label>
-          <pre
-            style={{
-              margin: 0,
-              padding: 12,
-              fontSize: 12,
-              fontFamily: "monospace",
-              backgroundColor: "var(--bg-panel)",
-              border: "1px solid var(--border)",
-              borderRadius: 8,
-              maxHeight: 200,
-              overflow: "auto",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-all",
-            }}
-          >
-            {builderLoading ? "Loading…" : formatRowsToText(builderRows, builderColumnKeys) || "(run report to preview)"}
-          </pre>
+          {builderRows.length > 0 ? (
+            <>
+              <div
+                style={{
+                  marginBottom: 8,
+                  fontSize: 12,
+                  color: "var(--text-muted)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                }}
+              >
+                <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={
+                      builderRows.length > 0 &&
+                      selectedBuilderRowIndices.length === builderRows.length
+                    }
+                    onChange={(e) =>
+                      e.target.checked ? selectAllBuilderRows() : clearBuilderRowSelection()
+                    }
+                  />
+                  Select all
+                </label>
+                {selectedBuilderRowIndices.length > 0 && (
+                  <button
+                    type="button"
+                    className="theme-btn theme-btn-ghost"
+                    style={{ fontSize: 12, padding: "2px 8px" }}
+                    onClick={clearBuilderRowSelection}
+                  >
+                    Clear selection
+                  </button>
+                )}
+              </div>
+              <div
+                style={{
+                  maxHeight: 220,
+                  overflow: "auto",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  backgroundColor: "var(--bg-panel)",
+                }}
+              >
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: "monospace" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--bg-panel)" }}>
+                      <th style={{ width: 32, padding: "6px 8px", textAlign: "left" }} />
+                      {builderColumnKeys.map((k) => (
+                        <th key={k} style={{ padding: "6px 8px", textAlign: "left", whiteSpace: "nowrap" }}>
+                          {k}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {builderRows.map((row, i) => (
+                      <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
+                        <td style={{ padding: "4px 8px" }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedBuilderRowIndices.includes(i)}
+                            onChange={() => toggleBuilderRowSelection(i)}
+                          />
+                        </td>
+                        {builderColumnKeys.map((k) => (
+                          <td key={k} style={{ padding: "4px 8px", wordBreak: "break-all" }}>
+                            {String(row[k] ?? "")}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : (
+            <pre
+              style={{
+                margin: 0,
+                padding: 12,
+                fontSize: 12,
+                fontFamily: "monospace",
+                backgroundColor: "var(--bg-panel)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                maxHeight: 200,
+                overflow: "auto",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-all",
+              }}
+            >
+              {builderLoading ? "Loading…" : "(run report to preview)"}
+            </pre>
+          )}
         </div>
       </section>
       )}
