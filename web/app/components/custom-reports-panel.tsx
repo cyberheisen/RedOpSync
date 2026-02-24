@@ -165,7 +165,7 @@ export function CustomReportsPanel({ projectId, subnets, onToast, savedReports =
 
   const toggleBuilderRowSelection = useCallback((index: number) => {
     setSelectedBuilderRowIndices((prev) =>
-      prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index].sort((a, b) => a - b))
+      prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index].sort((a, b) => a - b)
     );
   }, []);
   const selectAllBuilderRows = useCallback(() => {
