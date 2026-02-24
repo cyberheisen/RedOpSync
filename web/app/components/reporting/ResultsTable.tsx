@@ -7,6 +7,7 @@ type Props = {
   limit: number;
   offset: number;
   loading: boolean;
+  exporting?: boolean;
   lastRunTime: string | null;
   onPage: (newOffset: number) => void;
   onExportCsv: () => void;
@@ -25,6 +26,7 @@ export function ResultsTable({
   limit,
   offset,
   loading,
+  exporting = false,
   lastRunTime,
   onPage,
   onExportCsv,
@@ -46,11 +48,11 @@ export function ResultsTable({
           {!loading && rows.length > 0 && ` · ${rows.length} of ${totalCount} results`}
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button type="button" className="theme-btn theme-btn-ghost" style={{ fontSize: 12 }} onClick={onExportCsv} disabled={!rows.length}>
-            Export CSV
+          <button type="button" className="theme-btn theme-btn-ghost" style={{ fontSize: 12 }} onClick={onExportCsv} disabled={!rows.length || exporting}>
+            {exporting ? "Exporting…" : "Export CSV"}
           </button>
-          <button type="button" className="theme-btn theme-btn-ghost" style={{ fontSize: 12 }} onClick={onExportJson} disabled={!rows.length}>
-            Export JSON
+          <button type="button" className="theme-btn theme-btn-ghost" style={{ fontSize: 12 }} onClick={onExportJson} disabled={!rows.length || exporting}>
+            {exporting ? "Exporting…" : "Export JSON"}
           </button>
           <button type="button" className="theme-btn theme-btn-ghost" style={{ fontSize: 12 }} onClick={onSave}>
             Save

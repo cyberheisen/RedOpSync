@@ -37,6 +37,7 @@ export function ReportsPage({ projectId, onToast }: Props) {
 
   const [result, setResult] = useState<ExecuteReportResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [lastRunTime, setLastRunTime] = useState<string | null>(null);
   const [error, setError] = useState("");
 
@@ -76,7 +77,7 @@ export function ReportsPage({ projectId, onToast }: Props) {
   }, [fields]);
 
   const buildDefinition = useCallback(
-    (overrides?: { offset?: number }): ReportDefinitionV2 => {
+    (overrides?: { offset?: number; limit?: number }): ReportDefinitionV2 => {
       const sort = columns
         .filter((c) => c.sort && c.sort !== "none")
         .map((c) => ({ key: c.key, direction: (c.sort === "desc" ? "desc" : "asc") as "asc" | "desc" }));
@@ -85,7 +86,7 @@ export function ReportsPage({ projectId, onToast }: Props) {
         columns: columns.map((c) => ({ key: c.key, label: c.label })),
         sort: sort.length ? sort : [{ key: "host_ip", direction: "asc" }],
         filter,
-        limit,
+        limit: overrides?.limit ?? limit,
         offset: overrides?.offset ?? offset,
       };
     },
@@ -229,38 +230,101 @@ export function ReportsPage({ projectId, onToast }: Props) {
   );
 
   const exportCsv = useCallback(() => {
-    if (!result?.rows?.length) return;
-    const cols = result.columns;
+    if (!result) return;
     const escape = (v: unknown) => {
       const s = String(v ?? "");
       if (s.includes(",") || s.includes('"') || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
       return s;
     };
-    const header = cols.map(escape).join(",");
-    const lines = result.rows.map((r) => cols.map((c) => escape(r[c])).join(","));
-    const content = "\uFEFF" + [header, ...lines].join("\n");
-    const blob = new Blob([content], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "report.csv";
-    a.click();
-    URL.revokeObjectURL(url);
-    onToast?.("Exported as CSV");
-  }, [result, onToast]);
+    const writeCsv = (data: ExecuteReportResponse) => {
+      if (!data?.rows?.length && !data?.columns?.length) return;
+      const cols = data.columns;
+      const header = cols.map(escape).join(",");
+      const lines = data.rows.map((r) => cols.map((c) => escape(r[c])).join(","));
+      const content = "\uFEFF" + [header, ...lines].join("\n");
+      const blob = new Blob([content], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "report.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+      onToast?.("Exported as CSV");
+    };
+    const total = result.total_count ?? 0;
+    const haveAll = result.rows.length >= total;
+    if (haveAll || total === 0) {
+      writeCsv(result);
+      return;
+    }
+    setExporting(true);
+    onToast?.("Exporting all rows…");
+    const def = buildDefinition({ offset: 0, limit: Math.min(total, 10000) });
+    fetch(apiUrl(`/api/projects/${projectId}/reporting/execute`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ definition: def }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          throw new Error(formatApiErrorDetail(d?.detail, "Export failed"));
+        }
+        return r.json();
+      })
+      .then((data: ExecuteReportResponse) => {
+        writeCsv(data);
+      })
+      .catch((e) => onToast?.(e instanceof Error ? e.message : "Export failed"))
+      .finally(() => setExporting(false));
+  }, [projectId, result, buildDefinition, onToast]);
 
   const exportJson = useCallback(() => {
     if (!result) return;
-    const content = JSON.stringify({ columns: result.columns, rows: result.rows, total_count: result.total_count }, null, 2);
-    const blob = new Blob([content], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "report.json";
-    a.click();
-    URL.revokeObjectURL(url);
-    onToast?.("Exported as JSON");
-  }, [result, onToast]);
+    const writeJson = (data: ExecuteReportResponse) => {
+      const content = JSON.stringify(
+        { columns: data.columns, rows: data.rows, total_count: data.total_count },
+        null,
+        2
+      );
+      const blob = new Blob([content], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "report.json";
+      a.click();
+      URL.revokeObjectURL(url);
+      onToast?.("Exported as JSON");
+    };
+    const total = result.total_count ?? 0;
+    const haveAll = result.rows.length >= total;
+    if (haveAll || total === 0) {
+      writeJson(result);
+      return;
+    }
+    setExporting(true);
+    onToast?.("Exporting all rows…");
+    const def = buildDefinition({ offset: 0, limit: Math.min(total, 10000) });
+    fetch(apiUrl(`/api/projects/${projectId}/reporting/execute`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ definition: def }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          throw new Error(formatApiErrorDetail(d?.detail, "Export failed"));
+        }
+        return r.json();
+      })
+      .then((data: ExecuteReportResponse) => {
+        writeJson(data);
+      })
+      .catch((e) => onToast?.(e instanceof Error ? e.message : "Export failed"))
+      .finally(() => setExporting(false));
+  }, [projectId, result, buildDefinition, onToast]);
 
   const sortFromColumns = columns.find((c) => c.sort && c.sort !== "none");
   const sortKey = sortFromColumns?.key ?? null;
@@ -340,6 +404,7 @@ export function ReportsPage({ projectId, onToast }: Props) {
             limit={limit}
             offset={offset}
             loading={loading}
+            exporting={exporting}
             lastRunTime={lastRunTime}
             onPage={(newOffset) => { setOffset(newOffset); runReport(newOffset); }}
             onExportCsv={exportCsv}

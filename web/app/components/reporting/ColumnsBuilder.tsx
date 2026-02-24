@@ -23,19 +23,37 @@ function groupFieldsBySource(fields: FieldMetadata[]): Record<string, FieldMetad
   return bySource;
 }
 
+function fieldMatchesSearch(f: FieldMetadata, q: string): boolean {
+  if (!q.trim()) return true;
+  const lower = q.trim().toLowerCase();
+  const label = (f.label ?? "").toLowerCase();
+  const key = (f.key ?? "").toLowerCase();
+  return label.includes(lower) || key.includes(lower);
+}
+
 export function ColumnsBuilder({ fields, sources, columns, onChange }: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [columnSearchQuery, setColumnSearchQuery] = useState("");
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const dragNode = useRef<HTMLDivElement | null>(null);
 
   const bySource = groupFieldsBySource(fields);
   const sourceOrder = ["core", "nmap", "http", "gowitness", "whois", "tls", "notes"];
   const orderedSources = sourceOrder.filter((s) => bySource[s]?.length);
+  const filteredBySource = columnSearchQuery.trim()
+    ? Object.fromEntries(
+        orderedSources.map((s) => [
+          s,
+          (bySource[s] || []).filter((f) => fieldMatchesSearch(f, columnSearchQuery)),
+        ])
+      )
+    : bySource;
 
   const addColumn = (key: string, label?: string) => {
     if (columns.some((c) => c.key === key)) return;
     onChange([...columns, { key, label: label || key, sort: "none" }]);
     setDropdownOpen(false);
+    setColumnSearchQuery("");
   };
 
   const removeColumn = (index: number) => {
@@ -97,7 +115,7 @@ export function ColumnsBuilder({ fields, sources, columns, onChange }: Props) {
             <>
               <div
                 style={{ position: "fixed", inset: 0, zIndex: 10 }}
-                onClick={() => setDropdownOpen(false)}
+                onClick={() => { setDropdownOpen(false); setColumnSearchQuery(""); }}
                 aria-hidden
               />
               <div
@@ -116,12 +134,34 @@ export function ColumnsBuilder({ fields, sources, columns, onChange }: Props) {
                   minWidth: 220,
                 }}
               >
-                {orderedSources.map((source) => (
+                <div style={{ position: "sticky", top: 0, background: "var(--bg-panel)", padding: 8, borderBottom: "1px solid var(--border)", zIndex: 1 }} onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="text"
+                    placeholder="Search columns…"
+                    value={columnSearchQuery}
+                    onChange={(e) => setColumnSearchQuery(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "6px 10px",
+                      fontSize: 12,
+                      border: "1px solid var(--border)",
+                      borderRadius: 6,
+                      background: "var(--bg)",
+                      color: "var(--text)",
+                      boxSizing: "border-box",
+                    }}
+                    autoFocus
+                  />
+                </div>
+                {orderedSources.map((source) => {
+                  const sourceFields = filteredBySource[source] ?? [];
+                  if (sourceFields.length === 0) return null;
+                  return (
                   <div key={source}>
                     <div style={{ padding: "6px 10px", fontSize: 10, textTransform: "uppercase", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
                       {source}
                     </div>
-                    {(bySource[source] || []).map((f) => (
+                    {sourceFields.map((f) => (
                       <button
                         key={f.key}
                         type="button"
@@ -142,7 +182,8 @@ export function ColumnsBuilder({ fields, sources, columns, onChange }: Props) {
                       </button>
                     ))}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </>
           )}

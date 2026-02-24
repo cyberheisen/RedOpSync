@@ -21,6 +21,7 @@ REPORT_FIELDS: list[dict] = [
     # Core
     {"key": "host_ip", "label": "IP", "type": "string", "source": "core", "operators_supported": ["equals", "not_equals", "contains", "not_contains", "starts_with", "ends_with"]},
     {"key": "host_fqdn", "label": "Hostname", "type": "string", "source": "core", "operators_supported": ["equals", "not_equals", "contains", "not_contains", "exists", "not_exists"]},
+    {"key": "host_tags", "label": "Host tags", "type": "string", "source": "core", "operators_supported": ["contains", "not_contains", "exists", "not_exists"]},
     {"key": "port", "label": "Port", "type": "number", "source": "core", "operators_supported": ["equals", "not_equals", "gt", "gte", "lt", "lte", "between", "in_list", "not_in_list"]},
     {"key": "proto", "label": "Proto", "type": "string", "source": "core", "operators_supported": ["equals", "not_equals"]},
     {"key": "state", "label": "State", "type": "string", "source": "core", "operators_supported": ["equals", "not_equals", "contains"]},
@@ -96,6 +97,20 @@ def _condition_sql(c: ReportCondition, param_prefix: str) -> tuple[str, dict]:
     else:
         col_expr = col
     params: dict = {}
+
+    # host_tags is an array; use array_to_string for text search and array_length for exists/not_exists
+    if field == "host_tags":
+        if op == "contains":
+            params[f"{param_prefix}_v"] = f"%{str(c.value or '')}%"
+            return "COALESCE(array_to_string(host_tags, ' '), '') ILIKE :" + f"{param_prefix}_v", params
+        if op == "not_contains":
+            params[f"{param_prefix}_v"] = f"%{str(c.value or '')}%"
+            return "(host_tags IS NULL OR COALESCE(array_to_string(host_tags, ' '), '') NOT ILIKE :" + f"{param_prefix}_v)", params
+        if op == "exists":
+            return "(host_tags IS NOT NULL AND array_length(host_tags, 1) > 0)", params
+        if op == "not_exists":
+            return "(host_tags IS NULL OR array_length(host_tags, 1) IS NULL)", params
+        return "1=0", params
 
     # String operators
     if op in ("equals", "="):
