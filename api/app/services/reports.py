@@ -280,7 +280,16 @@ def _run_hosts_not_masscan(db: Session, project_id: UUID, parsed_filters: list[P
 
 
 def _run_hosts_without_whois(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
-    """Hosts with no whois_data (enrichment gap)."""
+    """Hosts with no whois_data (enrichment gap). Excludes hosts whose IP already has whois on another host (e.g. same IP, multiple hostnames)."""
+    # IPs in this project that have at least one host with whois_data (so we don't list other host rows for same IP)
+    ips_with_whois = {
+        row[0]
+        for row in db.query(Host.ip).filter(
+            Host.project_id == project_id,
+            Host.ip.isnot(None),
+            Host.whois_data.isnot(None),
+        ).distinct().all()
+    }
     q = (
         db.query(Host, Subnet)
         .outerjoin(Subnet, Host.subnet_id == Subnet.id)
@@ -290,6 +299,8 @@ def _run_hosts_without_whois(db: Session, project_id: UUID, parsed_filters: list
     for h, s in q.all():
         if not h.ip or h.ip.lower() == "unresolved":
             continue
+        if h.ip in ips_with_whois:
+            continue  # same IP has whois on another host (e.g. different hostname)
         if not entity_matches_filters(parsed_filters, "host", h, subnet_cidr=s.cidr if s else None):
             continue
         out.append({
