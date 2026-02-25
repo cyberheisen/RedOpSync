@@ -252,7 +252,9 @@ def execute_report_v2(
     keys = [c.key for c in col_specs if c.key in SELECT_EXPR]
     if not keys:
         keys = ["host_ip", "port", "proto", "state", "service_name", "latest_http_title", "whois_asn"]
-    select_parts = [f"{SELECT_EXPR[k]} AS {k}" for k in keys]
+    # Include service_id for tagging (each row is a port); do not add to returned column list
+    select_keys = keys + ["service_id"] if "service_id" not in keys else keys
+    select_parts = [f"{SELECT_EXPR[k]} AS {k}" for k in select_keys]
     select_sql = ", ".join(select_parts)
 
     # Sort
@@ -284,7 +286,7 @@ def execute_report_v2(
     rows: list[dict] = []
     for r in rows_raw:
         row = {}
-        for i, k in enumerate(keys):
+        for i, k in enumerate(select_keys):
             if i < len(r):
                 v = r[i]
                 if hasattr(v, "isoformat"):
@@ -296,6 +298,13 @@ def execute_report_v2(
                         row[k] = v
                 else:
                     row[k] = v
+        # Add tagging targets (bulk tag API); service_current rows are ports
+        sid = row.get("service_id")
+        if sid is not None:
+            row["_target_type"] = "port"
+            row["_target_id"] = str(sid)
+        if "service_id" in row and "service_id" not in keys:
+            del row["service_id"]
         rows.append(row)
 
     return keys, rows, total_count

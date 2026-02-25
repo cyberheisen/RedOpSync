@@ -17,6 +17,13 @@ type Props = {
   onSort?: (key: string) => void;
   sortKey?: string | null;
   sortDir?: "asc" | "desc" | null;
+  /** Row selection for "Tag selected" */
+  selectedRowIndices?: number[];
+  onToggleRowSelection?: (index: number) => void;
+  onSelectAllRows?: () => void;
+  onClearRowSelection?: () => void;
+  onTagAll?: () => void;
+  onTagSelected?: () => void;
 };
 
 export function ResultsTable({
@@ -36,9 +43,17 @@ export function ResultsTable({
   onSort,
   sortKey,
   sortDir,
+  selectedRowIndices = [],
+  onToggleRowSelection,
+  onSelectAllRows,
+  onClearRowSelection,
+  onTagAll,
+  onTagSelected,
 }: Props) {
   const pageIndex = Math.floor(offset / limit) + 1;
   const totalPages = Math.max(1, Math.ceil(totalCount / limit));
+  const showSelection = onToggleRowSelection != null;
+  const allSelected = rows.length > 0 && selectedRowIndices.length === rows.length;
 
   return (
     <div>
@@ -48,6 +63,16 @@ export function ResultsTable({
           {!loading && rows.length > 0 && ` · ${rows.length} of ${totalCount} results`}
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {onTagAll != null && (
+            <button type="button" className="theme-btn theme-btn-ghost" style={{ fontSize: 12 }} onClick={onTagAll} disabled={!rows.length}>
+              Tag all
+            </button>
+          )}
+          {onTagSelected != null && (
+            <button type="button" className="theme-btn theme-btn-ghost" style={{ fontSize: 12 }} onClick={onTagSelected} disabled={selectedRowIndices.length === 0}>
+              Tag selected
+            </button>
+          )}
           <button type="button" className="theme-btn theme-btn-ghost" style={{ fontSize: 12 }} onClick={onExportCsv} disabled={!rows.length || exporting}>
             {exporting ? "Exporting…" : "Export CSV"}
           </button>
@@ -66,6 +91,16 @@ export function ResultsTable({
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead style={{ position: "sticky", top: 0, background: "var(--bg-panel)", zIndex: 1 }}>
             <tr style={{ borderBottom: "2px solid var(--border)" }}>
+              {showSelection && (
+                <th style={{ padding: "10px 12px", width: 40 }}>
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={() => (allSelected ? onClearRowSelection?.() : onSelectAllRows?.())}
+                    aria-label="Select all rows"
+                  />
+                </th>
+              )}
               {columns.map((col) => (
                 <th
                   key={col}
@@ -87,6 +122,16 @@ export function ResultsTable({
           <tbody>
             {rows.map((row, i) => (
               <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
+                {showSelection && (
+                  <td style={{ padding: "8px 12px", width: 40 }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedRowIndices.includes(i)}
+                      onChange={() => onToggleRowSelection?.(i)}
+                      aria-label={`Select row ${i + 1}`}
+                    />
+                  </td>
+                )}
                 {columns.map((col) => (
                   <td key={col} style={{ padding: "8px 12px", maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis" }}>
                     {row[col] != null ? String(row[col]) : ""}

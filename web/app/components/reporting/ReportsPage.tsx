@@ -50,6 +50,14 @@ export function ReportsPage({ projectId, onToast }: Props) {
   const [saveDesc, setSaveDesc] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  const [tagBulkMode, setTagBulkMode] = useState<"all" | "selected">("all");
+  const [reportTags, setReportTags] = useState<{ id: string; name: string; color: string | null }[]>([]);
+  const [tagPickerLoading, setTagPickerLoading] = useState(false);
+  const [selectedTagIdForBulk, setSelectedTagIdForBulk] = useState("");
+  const [tagApplyLoading, setTagApplyLoading] = useState(false);
+  const [selectedRowIndices, setSelectedRowIndices] = useState<number[]>([]);
+
   const loadFields = useCallback(() => {
     const q = sources.length ? `?sources=${sources.join(",")}` : "";
     fetch(apiUrl(`/api/projects/${projectId}/reporting/fields${q}`), { credentials: "include" })
@@ -67,6 +75,29 @@ export function ReportsPage({ projectId, onToast }: Props) {
 
   useEffect(() => { loadFields(); }, [loadFields]);
   useEffect(() => { loadSavedReports(); }, [loadSavedReports]);
+
+  useEffect(() => {
+    if (!tagPickerOpen || !projectId) return;
+    setTagPickerLoading(true);
+    fetch(apiUrl(`/api/projects/${projectId}/tags`), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: { id: string; name: string; color: string | null }[]) => {
+        setReportTags(Array.isArray(list) ? list : []);
+        setSelectedTagIdForBulk(list?.[0]?.id ?? "");
+      })
+      .catch(() => setReportTags([]))
+      .finally(() => setTagPickerLoading(false));
+  }, [tagPickerOpen, projectId]);
+
+  const toggleRowSelection = useCallback((index: number) => {
+    setSelectedRowIndices((prev) =>
+      prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index].sort((a, b) => a - b)
+    );
+  }, []);
+  const selectAllRows = useCallback(() => {
+    setSelectedRowIndices((result?.rows ?? []).map((_, i) => i));
+  }, [result?.rows]);
+  const clearRowSelection = useCallback(() => setSelectedRowIndices([]), []);
 
   useEffect(() => {
     if (fields.length && columns.length === 0) {
@@ -114,6 +145,7 @@ export function ReportsPage({ projectId, onToast }: Props) {
         .then((data: ExecuteReportResponse) => {
           setResult(data);
           setLastRunTime(new Date().toLocaleTimeString());
+          setSelectedRowIndices([]);
         })
         .catch((e) => {
           setError(e instanceof Error ? e.message : "Report failed");
@@ -413,9 +445,90 @@ export function ReportsPage({ projectId, onToast }: Props) {
             onSaveAs={handleSaveAs}
             sortKey={sortKey}
             sortDir={sortDir}
+            selectedRowIndices={selectedRowIndices}
+            onToggleRowSelection={toggleRowSelection}
+            onSelectAllRows={selectAllRows}
+            onClearRowSelection={clearRowSelection}
+            onTagAll={() => { setTagBulkMode("all"); setTagPickerOpen(true); }}
+            onTagSelected={() => { setTagBulkMode("selected"); setTagPickerOpen(true); }}
           />
         </section>
       </main>
+
+      {/* Tag picker modal */}
+      {tagPickerOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.4)" }} onClick={() => !tagApplyLoading && setTagPickerOpen(false)}>
+          <div style={{ background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 12, padding: 20, minWidth: 280, maxWidth: "90vw" }} onClick={(e) => e.stopPropagation()}>
+            <h4 style={{ margin: "0 0 12px", fontSize: 14 }}>
+              {tagBulkMode === "all"
+                ? `Apply tag to all ${result?.rows?.length ?? 0} results`
+                : `Apply tag to ${selectedRowIndices.length} selected results`}
+            </h4>
+            {tagPickerLoading ? (
+              <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading tags…</p>
+            ) : reportTags.length === 0 ? (
+              <p style={{ color: "var(--text-muted)", fontSize: 13 }}>No tags. Create tags in the Mission first.</p>
+            ) : (
+              <>
+                <select
+                  value={selectedTagIdForBulk}
+                  onChange={(e) => setSelectedTagIdForBulk(e.target.value)}
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: 13, marginBottom: 16 }}
+                >
+                  {reportTags.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                  <button type="button" className="theme-btn theme-btn-ghost" disabled={tagApplyLoading} onClick={() => setTagPickerOpen(false)}>Cancel</button>
+                  <button
+                    type="button"
+                    className="theme-btn theme-btn-primary"
+                    disabled={tagApplyLoading || !selectedTagIdForBulk}
+                    onClick={() => {
+                      const rows = result?.rows ?? [];
+                      const toTag = tagBulkMode === "all" ? rows : selectedRowIndices.map((i) => rows[i]).filter(Boolean);
+                      const assignments = toTag
+                        .map((r: Record<string, unknown>) => ({ target_type: r._target_type, target_id: r._target_id }))
+                        .filter((a: { target_type?: unknown; target_id?: unknown }) => a.target_id);
+                      if (assignments.length === 0) {
+                        onToast?.("No valid targets to tag");
+                        return;
+                      }
+                      setTagApplyLoading(true);
+                      fetch(apiUrl(`/api/projects/${projectId}/item-tags/bulk`), {
+                        method: "POST",
+                        credentials: "include",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ tag_id: selectedTagIdForBulk, assignments }),
+                      })
+                        .then(async (r) => {
+                          if (!r.ok) {
+                            const d = await r.json().catch(() => ({}));
+                            throw new Error(formatApiErrorDetail(d?.detail, "Tag apply failed"));
+                          }
+                          return r.json();
+                        })
+                        .then((data: { created: number; skipped: number }) => {
+                          setTagPickerOpen(false);
+                          if (data.skipped > 0) {
+                            onToast?.(`Tag applied: ${data.created} created, ${data.skipped} already had tag`);
+                          } else {
+                            onToast?.(`Tag applied to ${data.created} items`);
+                          }
+                        })
+                        .catch((e) => onToast?.(e instanceof Error ? e.message : "Tag apply failed"))
+                        .finally(() => setTagApplyLoading(false));
+                    }}
+                  >
+                    {tagApplyLoading ? "Applying…" : "Apply"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Save modal */}
       {(saveModalOpen || saveAsModalOpen) && (
