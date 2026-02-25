@@ -118,11 +118,16 @@ def parse_whois_json(content: bytes, filename: str) -> tuple[list[tuple[str, dic
     return results, errors
 
 
-def _find_or_create_host(db: Session, project_id: UUID, ip: str) -> tuple[Host, bool]:
-    """Find host by IP in project, or create. Returns (host, created)."""
-    existing = db.query(Host).filter(Host.project_id == project_id, Host.ip == ip).first()
-    if existing:
-        return existing, False
+def _hosts_for_ip(db: Session, project_id: UUID, ip: str) -> list[Host]:
+    """All hosts in project with this IP (multiple possible when same IP has multiple hostnames)."""
+    return db.query(Host).filter(Host.project_id == project_id, Host.ip == ip).all()
+
+
+def _ensure_one_host(db: Session, project_id: UUID, ip: str) -> Host:
+    """Ensure at least one host exists for this IP; create if none. Returns that host."""
+    hosts = _hosts_for_ip(db, project_id, ip)
+    if hosts:
+        return hosts[0]
     subnet_id = find_or_create_subnet_for_ip(db, project_id, ip)
     host = Host(
         project_id=project_id,
@@ -134,7 +139,7 @@ def _find_or_create_host(db: Session, project_id: UUID, ip: str) -> tuple[Host, 
     db.add(host)
     db.commit()
     db.refresh(host)
-    return host, True
+    return host
 
 
 def run_whois_import(
@@ -156,20 +161,26 @@ def run_whois_import(
     subnets_updated_ids: set[UUID] = set()
     for ip, whois_data in records:
         try:
-            host, created = _find_or_create_host(db, project_id, ip)
-            host.whois_data = whois_data
-            owner = _whois_owner(whois_data)
-            if host.subnet_id and owner:
-                subnet = db.query(Subnet).filter(Subnet.id == host.subnet_id).first()
-                if subnet and subnet.name != owner:
-                    subnet.name = owner
-                    subnets_updated_ids.add(subnet.id)
-            db.commit()
-            db.refresh(host)
-            if created:
+            hosts = _hosts_for_ip(db, project_id, ip)
+            created_this_ip = False
+            if not hosts:
+                _ensure_one_host(db, project_id, ip)
+                hosts = _hosts_for_ip(db, project_id, ip)
                 summary.hosts_created += 1
-            else:
-                summary.hosts_updated += 1
+                created_this_ip = True
+            owner = _whois_owner(whois_data)
+            for host in hosts:
+                host.whois_data = whois_data
+                if host.subnet_id and owner:
+                    subnet = db.query(Subnet).filter(Subnet.id == host.subnet_id).first()
+                    if subnet and subnet.name != owner:
+                        subnet.name = owner
+                        subnets_updated_ids.add(subnet.id)
+            # Count only pre-existing hosts as "updated" (not the one we may have just created)
+            summary.hosts_updated += len(hosts) - (1 if created_this_ip else 0)
+            db.commit()
+            for host in hosts:
+                db.refresh(host)
         except Exception as e:
             summary.errors.append(f"{ip}: {e}")
     summary.subnets_updated = len(subnets_updated_ids)
