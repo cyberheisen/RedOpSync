@@ -311,6 +311,37 @@ def _run_hosts_without_whois(db: Session, project_id: UUID, parsed_filters: list
     return sorted(out, key=lambda r: (r["ip"] or "", r["dns_name"] or ""))
 
 
+def _run_hosts_without_ports(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
+    """Hosts that have no ports (zero ports). Excludes unresolved."""
+    host_ids_with_ports = {
+        row[0]
+        for row in db.query(Port.host_id)
+        .join(Host, Port.host_id == Host.id)
+        .filter(Host.project_id == project_id)
+        .distinct()
+        .all()
+    }
+    q = (
+        db.query(Host, Subnet)
+        .outerjoin(Subnet, Host.subnet_id == Subnet.id)
+        .filter(Host.project_id == project_id)
+    )
+    out = []
+    for h, s in q.all():
+        if not h.ip or h.ip.lower() == "unresolved":
+            continue
+        if h.id in host_ids_with_ports:
+            continue
+        if not entity_matches_filters(parsed_filters, "host", h, subnet_cidr=s.cidr if s else None):
+            continue
+        out.append({
+            "ip": h.ip,
+            "dns_name": h.dns_name,
+            "label": f"{h.ip} ({h.dns_name})" if h.dns_name else h.ip,
+        })
+    return sorted(out, key=lambda r: (r["ip"] or "", r["dns_name"] or ""))
+
+
 def _run_vulns_flat(db: Session, project_id: UUID, parsed_filters: list[ParsedFilter]) -> list[dict]:
     q = (
         db.query(VulnerabilityInstance, VulnerabilityDefinition, Host, Subnet)
@@ -690,6 +721,7 @@ REPORT_REGISTRY: dict[str, tuple[ReportConfig, callable]] = {
     "hosts_not_nmap": (ReportConfig("hosts_not_nmap", "Hosts not scanned by Nmap"), _run_hosts_not_nmap),
     "hosts_not_masscan": (ReportConfig("hosts_not_masscan", "Hosts not scanned by Masscan"), _run_hosts_not_masscan),
     "hosts_without_whois": (ReportConfig("hosts_without_whois", "Hosts without whois data"), _run_hosts_without_whois),
+    "hosts_without_ports": (ReportConfig("hosts_without_ports", "Hosts with no ports"), _run_hosts_without_ports),
     "host_detail_per_port": (ReportConfig("host_detail_per_port", "Host detail (one row per port)"), _run_host_detail_per_port),
     "technologies_per_host_port": (ReportConfig("technologies_per_host_port", "Technologies by host and port (one row per technology)"), _run_technologies_per_host_port),
     "host_identities": (ReportConfig("host_identities", "Host identities (IP and hostname)"), _run_host_identities),

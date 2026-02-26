@@ -2675,6 +2675,8 @@ export default function MissionDetailPage() {
                 })}
               </>
             )}
+            {((portsByHost[h.id]?.length ?? 0) > 0 || projectNotes.some((n) => n.target_type === "host_ports" && n.target_id === h.id) || projectTodos.some((t) => t.target_type === "host_ports" && t.target_id === h.id)) && (
+              <>
             <div
               className={"theme-tree-node" + (selectedNode?.type === "host-ports" && selectedNode.hostId === h.id ? " selected" : "")}
               style={nodeStyle(baseDepth + 1)}
@@ -2960,6 +2962,8 @@ export default function MissionDetailPage() {
                     );
                   })
                 )}
+              </>
+            )}
               </>
             )}
             {hasVulns && (
