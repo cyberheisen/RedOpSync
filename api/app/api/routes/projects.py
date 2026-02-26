@@ -17,7 +17,7 @@ from app.core.config import settings
 from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.models.models import AuditEvent, Evidence, Host, ItemTag, Lock, Port, Project, SavedReport, Tag, User, VulnerabilityDefinition
-from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectSortModeUpdate, ImportFromPathBody
+from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectSortModeUpdate, ImportFromPathBody, WhoisLookupBody, WhoisLookupResponse
 from app.schemas.tag import TagCreate, TagRead, ItemTagCreate, ItemTagRead, ItemTagBulkCreate, ItemTagBulkResponse
 from app.schemas.report import (
     ReportRunRequest,
@@ -51,6 +51,7 @@ from app.services.reporting_service import (
 )
 from app.db.session import SessionLocal
 from app.services.import_dispatcher import run_import, run_gowitness_import_from_path
+from app.services.whois_lookup import run_whois_lookup
 from app.services.import_job_store import create_job, get_job, set_failed, set_progress, set_result
 from app.services.reports import run_report, list_report_configs, run_builder, BUILDER_COLUMNS, _builder_columns_json, ReportFilters
 
@@ -165,6 +166,29 @@ def list_tool_runs(
             for r in rows
         ],
     }
+
+
+@router.post("/{project_id}/whois-lookup", response_model=WhoisLookupResponse)
+def whois_lookup(
+    project_id: UUID,
+    body: WhoisLookupBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Run whois/RDAP lookup for a host, all hosts in a subnet, or a single IP. Updates host(s) whois_data."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not body.host_id and not body.subnet_id and not body.ip:
+        raise HTTPException(status_code=400, detail="Provide host_id, subnet_id, or ip")
+    updated, errors = run_whois_lookup(
+        db,
+        project_id,
+        host_id=body.host_id,
+        subnet_id=body.subnet_id,
+        ip=body.ip,
+    )
+    return WhoisLookupResponse(updated=updated, errors=errors)
 
 
 @router.patch("/{project_id}", response_model=ProjectRead)

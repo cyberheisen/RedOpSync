@@ -27,6 +27,8 @@ type TodosPanelProps = {
   projectId: string;
   onToast?: (msg: string) => void;
   onFocusNode?: (node: { type: "subnet" | "host" | "port"; id: string }) => void;
+  /** When set, clicking the scope link focuses the tree on the host/subnet/port and selects this todo in the right pane. */
+  onFocusTodo?: (todo: Todo) => void;
   /** When this value changes, the panel refetches (e.g. after adding a todo from a node). */
   refreshTrigger?: number;
   subnets?: SubnetLike[];
@@ -58,7 +60,7 @@ function todoLinkLabel(
   return null;
 }
 
-export function TodosPanel({ projectId, onToast, onFocusNode, refreshTrigger, subnets, hosts, portsByHost, users = [] }: TodosPanelProps) {
+export function TodosPanel({ projectId, onToast, onFocusNode, onFocusTodo, refreshTrigger, subnets, hosts, portsByHost, users = [] }: TodosPanelProps) {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "open" | "done">("open");
@@ -138,7 +140,9 @@ export function TodosPanel({ projectId, onToast, onFocusNode, refreshTrigger, su
   };
 
   const focusTodo = (t: Todo) => {
-    if (t.port_id && onFocusNode) {
+    if (onFocusTodo && (t.host_id || t.subnet_id || t.port_id)) {
+      onFocusTodo(t);
+    } else if (t.port_id && onFocusNode) {
       onFocusNode({ type: "port", id: t.port_id });
     } else if (t.host_id && onFocusNode) {
       onFocusNode({ type: "host", id: t.host_id });

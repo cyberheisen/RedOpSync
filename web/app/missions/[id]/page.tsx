@@ -192,6 +192,7 @@ type SelectedNode =
   | { type: "todos" }
   | { type: "tags" }
   | { type: "todo"; id: string }
+  | { type: "todo-new"; parentType: "scope" | "subnet" | "host" | "host_ports" | "port" | "vulnerabilities" | "vulnerability_definition"; parentId?: string | null; contextLabel?: string }
   | { type: "tools-diff" }
   | { type: "tools-decoder-base" }
   | { type: "tools-decoder-xor" }
@@ -239,6 +240,53 @@ function getWhoisOwner(h: { whois_data?: Record<string, unknown> | null }): stri
   if (!w || typeof w !== "object") return "";
   const v = (w.network_name ?? w.asn_description) ?? "";
   return String(v).trim();
+}
+
+/** Returns expansion keys so the tree shows this todo under its parent (host/subnet/scope). */
+function getExpandedKeysForTodo(
+  t: { target_type: string; target_id: string | null; host_id: string | null; port_id: string | null; subnet_id: string | null },
+  hosts: { id: string; subnet_id: string | null; in_scope?: boolean }[],
+  portsByHost: Record<string, { id: string }[]>
+): string[] {
+  const keys: string[] = [];
+  if (t.target_type === "scope") {
+    keys.push("scope");
+    return keys;
+  }
+  if (t.target_type === "subnet" && t.target_id) {
+    keys.push("scope", "resolved", `subnet:${t.target_id}`);
+    return keys;
+  }
+  if ((t.target_type === "host" || t.target_type === "host_ports") && t.host_id) {
+    const h = hosts.find((x) => x.id === t.host_id);
+    if (h?.in_scope === false) keys.push("out-of-scope");
+    else keys.push("scope", "resolved");
+    if (h?.subnet_id) keys.push(`subnet:${h.subnet_id}`);
+    keys.push(`host:${t.host_id}`, `host-ports:${t.host_id}`);
+    return keys;
+  }
+  if (t.target_type === "port" && t.port_id) {
+    const portEntry = Object.entries(portsByHost).flatMap(([hid, list]) =>
+      list.map((port) => ({ hostId: hid, port }))
+    ).find((x) => x.port.id === t.port_id);
+    if (portEntry) {
+      const h = hosts.find((x) => x.id === portEntry.hostId);
+      if (h?.in_scope === false) keys.push("out-of-scope");
+      else keys.push("scope", "resolved");
+      if (h?.subnet_id) keys.push(`subnet:${h.subnet_id}`);
+      keys.push(`host:${portEntry.hostId}`, `host-ports:${portEntry.hostId}`);
+    }
+    return keys;
+  }
+  if (t.target_type === "vulnerabilities") {
+    keys.push("vulnerabilities");
+    return keys;
+  }
+  if (t.target_type === "vulnerability_definition" && t.target_id) {
+    keys.push("vulnerabilities", `vuln-def:${t.target_id}`);
+    return keys;
+  }
+  return keys;
 }
 
 function formatDate(s: string | null): string {
@@ -646,6 +694,113 @@ function SavedReportRunView({
           {rows.length > 500 && <p style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 8 }}>Showing first 500 of {rows.length} rows.</p>}
         </div>
       )}
+    </div>
+  );
+}
+
+type AddTodoRightPaneProps = {
+  projectId: string;
+  parentType: string;
+  parentId: string | null;
+  contextLabel?: string;
+  users: { id: string; username: string; role: string }[];
+  onCancel: () => void;
+  onSaved: (createdTodo: { id: string; target_type: string; target_id: string | null; host_id: string | null; port_id: string | null; subnet_id: string | null }) => void;
+  onToast?: (msg: string) => void;
+};
+
+function AddTodoRightPane({ projectId, parentType, parentId, contextLabel, users, onCancel, onSaved, onToast }: AddTodoRightPaneProps) {
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [assignedToUserId, setAssignedToUserId] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const t = title.trim();
+    if (!t) return;
+    setSaving(true);
+    fetch(apiUrl("/api/todos"), {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project_id: projectId,
+        title: t,
+        description: description.trim() || null,
+        target_type: parentType,
+        target_id: parentId,
+        assigned_to_user_id: assignedToUserId || null,
+      }),
+    })
+      .then((r) => {
+        if (!r.ok) return r.json().then((d) => { throw new Error(formatApiErrorDetail(d?.detail, "Create failed")); });
+        return r.json();
+      })
+      .then((created: { id: string; target_type: string; target_id: string | null; host_id: string | null; port_id: string | null; subnet_id: string | null }) => {
+        onToast?.("Todo added");
+        onSaved(created);
+      })
+      .catch((e) => onToast?.(e instanceof Error ? e.message : "Failed to create"))
+      .finally(() => setSaving(false));
+  };
+
+  return (
+    <div style={{ padding: 24, maxWidth: 640 }}>
+      <h2 style={{ margin: "0 0 8px", fontSize: "1.25rem" }}>Add Todo</h2>
+      {contextLabel && (
+        <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 16 }}>
+          Linked to: {contextLabel}
+        </p>
+      )}
+      <form onSubmit={handleSubmit}>
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "block", fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>Title</label>
+          <input
+            className="theme-input"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Todo title"
+            autoFocus
+            style={{ width: "100%", padding: "10px 12px", fontSize: 14 }}
+          />
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "block", fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>Description (optional, markdown supported)</label>
+          <textarea
+            className="theme-input"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Description"
+            rows={8}
+            style={{ width: "100%", padding: "10px 12px", fontSize: 14, resize: "vertical", minHeight: 120 }}
+          />
+        </div>
+        {users.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>Assign to</label>
+            <select
+              className="theme-select"
+              value={assignedToUserId}
+              onChange={(e) => setAssignedToUserId(e.target.value)}
+              style={{ width: "100%", maxWidth: 280, padding: "8px 12px" }}
+            >
+              <option value="">— Unassigned —</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.username}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button type="button" className="theme-btn theme-btn-ghost" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="submit" className="theme-btn theme-btn-primary" disabled={!title.trim() || saving}>
+            {saving ? "Saving…" : "Add"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -2072,6 +2227,37 @@ export default function MissionDetailPage() {
     }
   }, [acquireLock, setToast, missionId, mission?.sort_mode]);
 
+  const handleWhoisLookup = useCallback(
+    async (body: { host_id?: string; subnet_id?: string }) => {
+      if (!missionId) return;
+      setToast("Whois lookup…");
+      try {
+        const res = await fetch(apiUrl(`/api/projects/${missionId}/whois-lookup`), {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setToast(typeof data.detail === "string" ? data.detail : formatApiErrorDetail(data.detail, "Whois lookup failed"));
+          return;
+        }
+        const updated = (data as { updated?: number }).updated ?? 0;
+        const errors = (data as { errors?: string[] }).errors ?? [];
+        if (errors.length > 0) {
+          setToast(errors[0] ?? "Whois lookup had errors");
+        } else {
+          setToast(updated === 0 ? "No hosts to update" : `Whois updated for ${updated} host(s)`);
+        }
+        loadData();
+      } catch (err) {
+        setToast(err instanceof Error ? err.message : "Whois lookup failed");
+      }
+    },
+    [missionId, loadData]
+  );
+
   const handleCreateVuln = async (data: {
     hostIds: string[];
     title: string;
@@ -2389,11 +2575,12 @@ export default function MissionDetailPage() {
                 { label: "Add Port", onClick: () => setPortModal({ mode: "add", host: h }) },
                 { label: "Add Vulnerability", onClick: () => setVulnModal({ mode: "add", host: h }) },
                 { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "host", host: h }) },
-                { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "host", parentId: h.id, contextLabel: hostLabel(h) }) },
+                { label: "Add Todo", onClick: () => setSelectedNode({ type: "todo-new", parentType: "host", parentId: h.id, contextLabel: hostLabel(h) }) },
+                !isUnresolvedHost(h) ? { label: "Whois lookup", onClick: () => handleWhoisLookup({ host_id: h.id }) } : null,
                 { label: "Add tag", onClick: () => setAddTagModal({ targetType: "host", targetId: h.id }) },
                 { label: "Rename", onClick: () => setRenameHostModal(h) },
                 { label: "Delete", onClick: () => setDeleteHostModal(h) },
-              ],
+              ].filter(Boolean),
             });
           }}
         >
@@ -2537,7 +2724,7 @@ export default function MissionDetailPage() {
                     { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
                     { label: "Add Port", onClick: () => setPortModal({ mode: "add", host: h }) },
                     { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "host_ports", host: h }) },
-                    { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "host_ports", parentId: h.id, contextLabel: `Ports on ${hostLabel(h)}` }) },
+                    { label: "Add Todo", onClick: () => setSelectedNode({ type: "todo-new", parentType: "host_ports", parentId: h.id, contextLabel: `Ports on ${hostLabel(h)}` }) },
                   ],
                 });
               }}
@@ -2628,7 +2815,7 @@ export default function MissionDetailPage() {
                               items: [
                                 { label: "Edit Port", onClick: () => setPortModal({ mode: "edit", host: h, port: p }) },
                                 { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "port", port: p, host: h }) },
-                                { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "port", parentId: p.id, contextLabel: `${p.number}/${p.protocol} on ${hostLabel(h)}` }) },
+                                { label: "Add Todo", onClick: () => setSelectedNode({ type: "todo-new", parentType: "port", parentId: p.id, contextLabel: `${p.number}/${p.protocol} on ${hostLabel(h)}` }) },
                                 { label: "Add tag", onClick: () => setAddTagModal({ targetType: "port", targetId: p.id, hostId: h.id }) },
                                 { label: "Delete Port", onClick: () => setDeletePortModal({ port: p, host: h }) },
                               ],
@@ -3187,6 +3374,16 @@ export default function MissionDetailPage() {
           hosts={hosts}
           portsByHost={portsByHost}
           users={users}
+          onFocusTodo={(todo) => {
+            const t = projectTodos.find((x) => x.id === todo.id) ?? todo as ProjectTodo;
+            setExpanded((prev) => {
+              const next = new Set(prev);
+              next.add("todos-root");
+              getExpandedKeysForTodo(t, hosts, portsByHost).forEach((k) => next.add(k));
+              return next;
+            });
+            setSelectedNode({ type: "todo", id: todo.id });
+          }}
           onFocusNode={(node) => {
             setExpanded((prev) => {
               const next = new Set(prev);
@@ -3218,6 +3415,29 @@ export default function MissionDetailPage() {
           }}
         />
       );
+    if (selectedNode.type === "todo-new") {
+      return (
+        <AddTodoRightPane
+          projectId={missionId}
+          parentType={selectedNode.parentType}
+          parentId={selectedNode.parentId ?? null}
+          contextLabel={selectedNode.contextLabel}
+          users={users}
+          onCancel={() => setSelectedNode({ type: "todos" })}
+          onSaved={(createdTodo) => {
+            setTodosVersion((v) => v + 1);
+            setSelectedNode({ type: "todo", id: createdTodo.id });
+            setExpanded((prev) => {
+              const next = new Set(prev);
+              next.add("todos-root");
+              getExpandedKeysForTodo(createdTodo, hosts, portsByHost).forEach((k) => next.add(k));
+              return next;
+            });
+          }}
+          onToast={setToast}
+        />
+      );
+    }
     if (selectedNode.type === "todo") {
       const todo = projectTodos.find((t) => t.id === selectedNode.id);
       if (!todo) return <div style={{ padding: 24, color: "var(--text-muted)" }}>Todo not found.</div>;
@@ -3987,7 +4207,7 @@ export default function MissionDetailPage() {
                   { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
                   { label: "Add Subnet", onClick: () => setAddSubnetModal(true) },
                   { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "scope" }) },
-                  { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "scope", contextLabel: "Scope" }) },
+                  { label: "Add Todo", onClick: () => setSelectedNode({ type: "todo-new", parentType: "scope", contextLabel: "Scope" }) },
                   { label: "Import scan results", onClick: () => setImportHostsModal({ type: "scope" }) },
                 ],
               });
@@ -4112,7 +4332,8 @@ export default function MissionDetailPage() {
                               : { label: "Move back into scope", onClick: () => handleMoveSubnetScope(s.id, true) },
                             { label: "Add Host", onClick: () => setAddHostModal({ subnetId: s.id }) },
                             { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "subnet", subnet: s }) },
-                            { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "subnet", parentId: s.id, contextLabel: `Subnet ${s.cidr}${s.name ? ` (${s.name})` : ""}` }) },
+                            { label: "Add Todo", onClick: () => setSelectedNode({ type: "todo-new", parentType: "subnet", parentId: s.id, contextLabel: `Subnet ${s.cidr}${s.name ? ` (${s.name})` : ""}` }) },
+                            { label: "Whois lookup", onClick: () => handleWhoisLookup({ subnet_id: s.id }) },
                             { label: "Import scan results", onClick: () => setImportHostsModal({ type: "subnet", id: s.id, cidr: s.cidr, name: s.name }) },
                             { label: "Rename", onClick: () => setRenameSubnetModal(s) },
                             { label: "Delete", onClick: () => setDeleteSubnetModal(s) },
@@ -4278,7 +4499,8 @@ export default function MissionDetailPage() {
                             { label: "Move back into scope", onClick: () => handleMoveSubnetScope(s.id, true) },
                             { label: "Add Host", onClick: () => setAddHostModal({ subnetId: s.id }) },
                             { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "subnet", subnet: s }) },
-                            { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "subnet", parentId: s.id, contextLabel: `Subnet ${s.cidr}${s.name ? ` (${s.name})` : ""}` }) },
+                            { label: "Add Todo", onClick: () => setSelectedNode({ type: "todo-new", parentType: "subnet", parentId: s.id, contextLabel: `Subnet ${s.cidr}${s.name ? ` (${s.name})` : ""}` }) },
+                            { label: "Whois lookup", onClick: () => handleWhoisLookup({ subnet_id: s.id }) },
                             { label: "Import scan results", onClick: () => setImportHostsModal({ type: "subnet", id: s.id, cidr: s.cidr, name: s.name }) },
                             { label: "Rename", onClick: () => setRenameSubnetModal(s) },
                             { label: "Delete", onClick: () => setDeleteSubnetModal(s) },
@@ -4329,7 +4551,7 @@ export default function MissionDetailPage() {
                   { label: "Expand All/Collapse All", onClick: () => toggleExpandCollapseAll() },
                   { label: "Add Vulnerability", onClick: () => setVulnModal({ mode: "add" }) },
                   { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "vulnerabilities" }) },
-                  { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "vulnerabilities", contextLabel: "Vulnerabilities" }) },
+                  { label: "Add Todo", onClick: () => setSelectedNode({ type: "todo-new", parentType: "vulnerabilities", contextLabel: "Vulnerabilities" }) },
                 ],
               });
             }}
@@ -4408,7 +4630,7 @@ export default function MissionDetailPage() {
                             items: [
                               { label: "Edit", onClick: () => setVulnModal({ mode: "edit", host: editHost ?? undefined, definition: d }) },
                               { label: "Add Note", onClick: () => setNoteModal({ mode: "add", target: "vulnerability_definition", definition: d }) },
-                              { label: "Add Todo", onClick: () => setAddTodoModal({ parentType: "vulnerability_definition", parentId: d.id, contextLabel: `Vulnerability: ${d.title}` }) },
+                              { label: "Add Todo", onClick: () => setSelectedNode({ type: "todo-new", parentType: "vulnerability_definition", parentId: d.id, contextLabel: `Vulnerability: ${d.title}` }) },
                               { label: "Add tag", onClick: () => setAddTagModal({ targetType: "vuln_definition", targetId: d.id }) },
                               { label: "Delete", onClick: () => setDeleteVulnModal({ instance: { id: "", host_id: d.affected_host_ids?.[0] ?? "", vulnerability_definition_id: d.id, definition_title: d.title, definition_severity: d.severity, definition_cvss_score: d.cvss_score, definition_cve_ids: d.cve_ids ?? [], definition_description_md: d.description_md, definition_evidence_md: d.evidence_md, definition_discovered_by: d.discovered_by, port_id: null, status: "open" } }) },
                             ],
@@ -4511,15 +4733,46 @@ export default function MissionDetailPage() {
               ) : (
               projectTodos.map((t) => {
                 const isSel = selectedNode?.type === "todo" && selectedNode.id === t.id;
+                const scopeLabel = t.port_id && portsByHost
+                  ? (() => {
+                      for (const h of hosts) {
+                        const port = (portsByHost[h.id] ?? []).find((p) => p.id === t.port_id);
+                        if (port) return `Port ${port.number}/${port.protocol} on ${hostLabel(h)}`;
+                      }
+                      return null;
+                    })()
+                  : t.host_id ? (() => { const h = hosts.find((x) => x.id === t.host_id); return h ? hostLabel(h) : null; })()
+                  : t.subnet_id ? (() => { const s = subnets.find((x) => x.id === t.subnet_id); return s ? `Subnet ${s.cidr}${s.name ? ` (${s.name})` : ""}` : null; })()
+                  : t.target_type === "scope"
+                  ? "Scope"
+                  : t.target_type === "vulnerabilities"
+                  ? "Vulnerabilities"
+                  : t.target_type === "vulnerability_definition"
+                  ? "Vuln definition"
+                  : null;
                 return (
                   <div
                     key={t.id}
                     className={"theme-tree-node" + (isSel ? " selected" : "")}
                     style={{ ...nodeStyle(1), paddingLeft: 12, color: "var(--text-muted)", textDecoration: t.status === "done" ? "line-through" : undefined }}
-                    onClick={(ev) => { ev.stopPropagation(); setSelectedNode({ type: "todo", id: t.id }); }}
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      setExpanded((prev) => {
+                        const next = new Set(prev);
+                        next.add("todos-root");
+                        getExpandedKeysForTodo(t, hosts, portsByHost).forEach((k) => next.add(k));
+                        return next;
+                      });
+                      setSelectedNode({ type: "todo", id: t.id });
+                    }}
                   >
                     <span style={{ width: 14 }}>•</span>
-                    {t.title}
+                    <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0 }}>
+                      <span>{t.title}</span>
+                      {scopeLabel && (
+                        <span style={{ fontSize: 11, color: "var(--text-dim)", marginLeft: 0 }}>→ {scopeLabel}</span>
+                      )}
+                    </span>
                   </div>
                 );
               })

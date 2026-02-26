@@ -35,6 +35,18 @@ class ImportFromPathBody(BaseModel):
     path: str = Field(..., min_length=1, max_length=2048)
 
 
+class WhoisLookupBody(BaseModel):
+    """One of host_id, subnet_id, or ip must be set."""
+    host_id: UUID | None = None
+    subnet_id: UUID | None = None
+    ip: str | None = None
+
+
+class WhoisLookupResponse(BaseModel):
+    updated: int
+    errors: list[str]
+
+
 class ProjectRead(BaseModel):
     id: UUID
     name: str
