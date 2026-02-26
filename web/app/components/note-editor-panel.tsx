@@ -20,6 +20,12 @@ type Props = {
   } | null;
   onClose: () => void;
   onSave: (title: string, bodyMd: string, attachments: NoteAttachment[]) => Promise<void>;
+  /** Hide the attachments section (e.g. when used for todos) */
+  hideAttachments?: boolean;
+  /** If false, do not call onClose after a successful save (default true) */
+  closeAfterSave?: boolean;
+  /** Override header text (e.g. "Edit todo" instead of "Edit note") */
+  editorTitle?: string;
 };
 
 const ACCEPT = ".png,.jpg,.jpeg,.txt,.pdf";
@@ -32,7 +38,7 @@ function getFileIcon(filename: string): string {
   return "📎";
 }
 
-export function NoteEditorPanel({ contextLabel, note, onClose, onSave }: Props) {
+export function NoteEditorPanel({ contextLabel, note, onClose, onSave, hideAttachments = false, closeAfterSave = true, editorTitle }: Props) {
   const [title, setTitle] = useState(note?.title ?? "");
   const [bodyMd, setBodyMd] = useState(note?.body_md ?? "");
   const [attachments, setAttachments] = useState<NoteAttachment[]>([]);
@@ -146,7 +152,7 @@ export function NoteEditorPanel({ contextLabel, note, onClose, onSave }: Props) 
     setSaving(true);
     try {
       await onSave(title.trim(), bodyMd, attachments);
-      onClose();
+      if (closeAfterSave) onClose();
     } finally {
       setSaving(false);
     }
@@ -171,7 +177,7 @@ export function NoteEditorPanel({ contextLabel, note, onClose, onSave }: Props) 
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexShrink: 0 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: "1.25rem" }}>{note ? "Edit note" : "Add note"}</h2>
+          <h2 style={{ margin: 0, fontSize: "1.25rem" }}>{editorTitle ?? (note ? "Edit note" : "Add note")}</h2>
           <p style={{ margin: "4px 0 0", fontSize: 14, color: "var(--text-muted)" }}>
             {contextLabel}
           </p>
@@ -316,54 +322,56 @@ export function NoteEditorPanel({ contextLabel, note, onClose, onSave }: Props) 
           )}
         </div>
 
-        <div style={{ flexShrink: 0 }}>
-          <label style={{ display: "block", marginBottom: 8, fontSize: 14 }}>Attachments</label>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={ACCEPT}
-            multiple
-            onChange={handleFileChange}
-            style={{ display: "none" }}
-          />
-          <button
-            type="button"
-            className="theme-btn theme-btn-ghost"
-            onClick={() => fileInputRef.current?.click()}
-            style={{ marginBottom: 8 }}
-          >
-            Add file (png, jpg, txt, pdf)
-          </button>
-          {attachments.length > 0 && (
-            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {attachments.map((a) => (
-                <li
-                  key={a.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "6px 10px",
-                    backgroundColor: "var(--bg-panel)",
-                    borderRadius: 6,
-                    marginBottom: 4,
-                  }}
-                >
-                  <span style={{ fontSize: 16 }}>{getFileIcon(a.file.name)}</span>
-                  <span style={{ flex: 1, fontSize: 14 }}>{a.file.name}</span>
-                  <button
-                    type="button"
-                    className="theme-btn theme-btn-ghost"
-                    style={{ padding: "2px 8px", fontSize: 12, color: "var(--error)" }}
-                    onClick={() => removeAttachment(a.id)}
+        {!hideAttachments && (
+          <div style={{ flexShrink: 0 }}>
+            <label style={{ display: "block", marginBottom: 8, fontSize: 14 }}>Attachments</label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={ACCEPT}
+              multiple
+              onChange={handleFileChange}
+              style={{ display: "none" }}
+            />
+            <button
+              type="button"
+              className="theme-btn theme-btn-ghost"
+              onClick={() => fileInputRef.current?.click()}
+              style={{ marginBottom: 8 }}
+            >
+              Add file (png, jpg, txt, pdf)
+            </button>
+            {attachments.length > 0 && (
+              <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                {attachments.map((a) => (
+                  <li
+                    key={a.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "6px 10px",
+                      backgroundColor: "var(--bg-panel)",
+                      borderRadius: 6,
+                      marginBottom: 4,
+                    }}
                   >
-                    Remove
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+                    <span style={{ fontSize: 16 }}>{getFileIcon(a.file.name)}</span>
+                    <span style={{ flex: 1, fontSize: 14 }}>{a.file.name}</span>
+                    <button
+                      type="button"
+                      className="theme-btn theme-btn-ghost"
+                      style={{ padding: "2px 8px", fontSize: 12, color: "var(--error)" }}
+                      onClick={() => removeAttachment(a.id)}
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </form>
     </div>
   );

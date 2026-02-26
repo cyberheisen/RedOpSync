@@ -710,97 +710,67 @@ type AddTodoRightPaneProps = {
 };
 
 function AddTodoRightPane({ projectId, parentType, parentId, contextLabel, users, onCancel, onSaved, onToast }: AddTodoRightPaneProps) {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
   const [assignedToUserId, setAssignedToUserId] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const t = title.trim();
-    if (!t) return;
-    setSaving(true);
-    fetch(apiUrl("/api/todos"), {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        project_id: projectId,
-        title: t,
-        description: description.trim() || null,
-        target_type: parentType,
-        target_id: parentId,
-        assigned_to_user_id: assignedToUserId || null,
-      }),
-    })
-      .then((r) => {
-        if (!r.ok) return r.json().then((d) => { throw new Error(formatApiErrorDetail(d?.detail, "Create failed")); });
-        return r.json();
-      })
-      .then((created: { id: string; target_type: string; target_id: string | null; host_id: string | null; port_id: string | null; subnet_id: string | null }) => {
-        onToast?.("Todo added");
-        onSaved(created);
-      })
-      .catch((e) => onToast?.(e instanceof Error ? e.message : "Failed to create"))
-      .finally(() => setSaving(false));
-  };
-
   return (
-    <div style={{ padding: 24, maxWidth: 640 }}>
-      <h2 style={{ margin: "0 0 8px", fontSize: "1.25rem" }}>Add Todo</h2>
-      {contextLabel && (
-        <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 16 }}>
-          Linked to: {contextLabel}
-        </p>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden" }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <NoteEditorPanel
+          contextLabel={contextLabel ?? "Todo"}
+          note={null}
+          onClose={onCancel}
+          onSave={async (title, bodyMd) => {
+            const res = await fetch(apiUrl("/api/todos"), {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                project_id: projectId,
+                title: title.trim(),
+                description: bodyMd.trim() || null,
+                target_type: parentType,
+                target_id: parentId,
+                assigned_to_user_id: assignedToUserId || null,
+              }),
+            });
+            if (!res.ok) {
+              const d = await res.json().catch(() => ({}));
+              throw new Error(formatApiErrorDetail(d?.detail, "Create failed"));
+            }
+            const created = await res.json();
+            onToast?.("Todo added");
+            onSaved(created);
+          }}
+          hideAttachments
+          closeAfterSave={false}
+          editorTitle="Add todo"
+        />
+      </div>
+      {users.length > 0 && (
+        <div
+          style={{
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: 12,
+            borderTop: "1px solid var(--border)",
+            backgroundColor: "var(--bg-panel)",
+          }}
+        >
+          <span style={{ fontSize: 14, color: "var(--text-muted)" }}>Assign to</span>
+          <select
+            className="theme-select"
+            value={assignedToUserId}
+            onChange={(e) => setAssignedToUserId(e.target.value)}
+            style={{ padding: "6px 10px", fontSize: 13 }}
+          >
+            <option value="">— Unassigned —</option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>{u.username}</option>
+            ))}
+          </select>
+        </div>
       )}
-      <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: "block", fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>Title</label>
-          <input
-            className="theme-input"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Todo title"
-            autoFocus
-            style={{ width: "100%", padding: "10px 12px", fontSize: 14 }}
-          />
-        </div>
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: "block", fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>Description (optional, markdown supported)</label>
-          <textarea
-            className="theme-input"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Description"
-            rows={8}
-            style={{ width: "100%", padding: "10px 12px", fontSize: 14, resize: "vertical", minHeight: 120 }}
-          />
-        </div>
-        {users.length > 0 && (
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: "block", fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>Assign to</label>
-            <select
-              className="theme-select"
-              value={assignedToUserId}
-              onChange={(e) => setAssignedToUserId(e.target.value)}
-              style={{ width: "100%", maxWidth: 280, padding: "8px 12px" }}
-            >
-              <option value="">— Unassigned —</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>{u.username}</option>
-              ))}
-            </select>
-          </div>
-        )}
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button type="button" className="theme-btn theme-btn-ghost" onClick={onCancel}>
-            Cancel
-          </button>
-          <button type="submit" className="theme-btn theme-btn-primary" disabled={!title.trim() || saving}>
-            {saving ? "Saving…" : "Add"}
-          </button>
-        </div>
-      </form>
     </div>
   );
 }
@@ -2246,7 +2216,7 @@ export default function MissionDetailPage() {
         const updated = (data as { updated?: number }).updated ?? 0;
         const errors = (data as { errors?: string[] }).errors ?? [];
         if (errors.length > 0) {
-          setToast(errors[0] ?? "Whois lookup had errors");
+          setToast(errors.length === 1 ? errors[0]! : `${errors.length} failed: ${errors.slice(0, 2).join("; ")}${errors.length > 2 ? "…" : ""}`);
         } else {
           setToast(updated === 0 ? "No hosts to update" : `Whois updated for ${updated} host(s)`);
         }
@@ -3441,7 +3411,33 @@ export default function MissionDetailPage() {
     if (selectedNode.type === "todo") {
       const todo = projectTodos.find((t) => t.id === selectedNode.id);
       if (!todo) return <div style={{ padding: 24, color: "var(--text-muted)" }}>Todo not found.</div>;
-      const patchTodo = (updates: { status?: string; assigned_to_user_id?: string | null }) => {
+      const todoScopeLabel =
+        todo.port_id && portsByHost
+          ? (() => {
+              for (const h of hosts) {
+                const port = (portsByHost[h.id] ?? []).find((p) => p.id === todo.port_id);
+                if (port) return `Port ${port.number}/${port.protocol} on ${hostLabel(h)}`;
+              }
+              return null;
+            })()
+          : todo.host_id
+            ? (() => {
+                const h = hosts.find((x) => x.id === todo.host_id);
+                return h ? hostLabel(h) : null;
+              })()
+            : todo.subnet_id
+              ? (() => {
+                  const s = subnets.find((x) => x.id === todo.subnet_id);
+                  return s ? `Subnet ${s.cidr}${s.name ? ` (${s.name})` : ""}` : null;
+                })()
+              : todo.target_type === "scope"
+                ? "Scope"
+                : todo.target_type === "vulnerabilities"
+                  ? "Vulnerabilities"
+                  : todo.target_type === "vulnerability_definition"
+                    ? "Vuln definition"
+                    : "Todo";
+      const patchTodo = (updates: { status?: string; assigned_to_user_id?: string | null; title?: string; description?: string | null }) => {
         fetch(apiUrl(`/api/todos/${todo.id}`), {
           method: "PATCH",
           credentials: "include",
@@ -3451,7 +3447,9 @@ export default function MissionDetailPage() {
           .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Update failed"))))
           .then((t: ProjectTodo) => {
             setProjectTodos((prev) => prev.map((x) => (x.id === t.id ? t : x)));
-            setToast(updates.status ? (updates.status === "done" ? "Marked done" : "Reopened") : "Assignee updated");
+            if (updates.status) setToast(updates.status === "done" ? "Marked done" : "Reopened");
+            else if (updates.assigned_to_user_id !== undefined) setToast("Assignee updated");
+            else if (updates.title !== undefined) setToast("Todo saved");
           })
           .catch(() => setToast("Update failed"));
       };
@@ -3466,28 +3464,54 @@ export default function MissionDetailPage() {
           .catch(() => setToast("Delete failed"));
       };
       return (
-        <div style={{ padding: 24 }}>
-          <h2 style={{ margin: "0 0 8px", fontSize: "1.25rem", textDecoration: todo.status === "done" ? "line-through" : undefined }}>{todo.title}</h2>
-          {todo.description && <p style={{ color: "var(--text-muted)", marginBottom: 16 }}>{todo.description}</p>}
-          <div style={{ marginBottom: 16, fontSize: 14, color: "var(--text-muted)" }}>
-            <label style={{ display: "block", marginBottom: 4 }}>Assign to</label>
+        <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden" }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+            <NoteEditorPanel
+              contextLabel={todoScopeLabel}
+              note={{ id: todo.id, title: todo.title, body_md: todo.description }}
+              onClose={() => setSelectedNode({ type: "todos" })}
+              onSave={async (title, bodyMd) => {
+                patchTodo({ title, description: bodyMd || null });
+              }}
+              hideAttachments
+              closeAfterSave={false}
+              editorTitle="Edit todo"
+            />
+          </div>
+          <div
+            style={{
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              flexWrap: "wrap",
+              padding: 12,
+              borderTop: "1px solid var(--border)",
+              backgroundColor: "var(--bg-panel)",
+            }}
+          >
+            <span style={{ fontSize: 14, color: "var(--text-muted)" }}>Assign to</span>
             <select
               className="theme-select"
               value={todo.assigned_to_user_id ?? ""}
               onChange={(e) => patchTodo({ assigned_to_user_id: e.target.value || null })}
-              style={{ maxWidth: 240 }}
+              style={{ padding: "6px 10px", fontSize: 13 }}
             >
               <option value="">— Unassigned —</option>
               {users.map((u) => (
                 <option key={u.id} value={u.id}>{u.username}</option>
               ))}
             </select>
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button type="button" className="theme-btn theme-btn-primary" onClick={() => patchTodo({ status: todo.status === "done" ? "open" : "done" })}>
+            <button
+              type="button"
+              className="theme-btn theme-btn-primary"
+              onClick={() => patchTodo({ status: todo.status === "done" ? "open" : "done" })}
+            >
               {todo.status === "done" ? "Reopen" : "Mark done"}
             </button>
-            <button type="button" className="theme-btn theme-btn-ghost" style={{ color: "var(--error)" }} onClick={deleteTodo}>Delete</button>
+            <button type="button" className="theme-btn theme-btn-ghost" style={{ color: "var(--error)" }} onClick={deleteTodo}>
+              Delete
+            </button>
           </div>
         </div>
       );

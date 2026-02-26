@@ -39,6 +39,15 @@ def _normalize_ip(ip_str: str) -> str | None:
         return None
 
 
+def _is_private_or_reserved(ip_str: str) -> bool:
+    """True if the IP is private, link-local, or reserved (no public RDAP data)."""
+    try:
+        addr = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return True
+    return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved
+
+
 def _rdap_to_whois_data(rdap: dict, ip: str) -> dict:
     """Map RDAP IP network response to our whois_data dict."""
     out: dict = {}
@@ -98,23 +107,39 @@ def _rdap_to_whois_data(rdap: dict, ip: str) -> dict:
     return {k: out[k] for k in WHOIS_KEYS if k in out and out[k] is not None}
 
 
-def fetch_rdap_for_ip(ip: str) -> dict | None:
-    """Fetch RDAP data for an IP from a public RDAP service. Returns whois_data-shaped dict or None on failure."""
+def fetch_rdap_for_ip(ip: str) -> tuple[dict | None, str | None]:
+    """
+    Fetch RDAP data for an IP from a public RDAP service.
+    Returns (whois_data dict or None, error_message or None).
+    """
     ip_norm = _normalize_ip(ip)
     if not ip_norm:
-        return None
+        return None, "Invalid IP"
+    if _is_private_or_reserved(ip_norm):
+        return None, "Private or reserved IPs have no public RDAP data"
     url = f"https://rdap.org/ip/{ip_norm}"
     try:
         with httpx.Client(timeout=RDAP_TIMEOUT) as client:
             r = client.get(url)
             if r.status_code != 200:
-                return None
+                try:
+                    err = r.json()
+                    if isinstance(err, dict) and "title" in err:
+                        return None, f"RDAP: {err.get('title', r.status_code)}"
+                except Exception:
+                    pass
+                return None, f"RDAP returned {r.status_code}"
             data = r.json()
-    except Exception:
-        return None
+    except httpx.TimeoutException:
+        return None, "RDAP request timed out"
+    except httpx.ConnectError as e:
+        return None, f"Could not reach RDAP: {e!s}"
+    except Exception as e:
+        return None, f"Lookup failed: {e!s}"
     if not isinstance(data, dict):
-        return None
-    return _rdap_to_whois_data(data, ip_norm)
+        return None, "Invalid RDAP response"
+    whois_data = _rdap_to_whois_data(data, ip_norm)
+    return whois_data, None
 
 
 def run_whois_lookup(
@@ -160,9 +185,12 @@ def run_whois_lookup(
         return 0, errors
 
     for ip_str in ips_to_lookup:
-        whois_data = fetch_rdap_for_ip(ip_str)
+        whois_data, err_msg = fetch_rdap_for_ip(ip_str)
+        if err_msg:
+            errors.append(f"{ip_str}: {err_msg}")
+            continue
         if not whois_data:
-            errors.append(f"{ip_str}: lookup failed or no data")
+            errors.append(f"{ip_str}: no data returned")
             continue
         hosts = db.query(Host).filter(Host.project_id == project_id, Host.ip == ip_str).all()
         if not hosts:
