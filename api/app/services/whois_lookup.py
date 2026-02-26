@@ -120,7 +120,7 @@ def fetch_rdap_for_ip(ip: str) -> tuple[dict | None, str | None]:
     url = f"https://rdap.org/ip/{ip_norm}"
     try:
         with httpx.Client(timeout=RDAP_TIMEOUT) as client:
-            r = client.get(url)
+            r = client.get(url, follow_redirects=True)
             if r.status_code != 200:
                 try:
                     err = r.json()

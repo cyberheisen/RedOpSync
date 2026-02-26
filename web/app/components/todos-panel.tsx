@@ -60,6 +60,13 @@ function todoLinkLabel(
   return null;
 }
 
+function todoFocusNode(t: Todo): { type: "subnet" | "host" | "port"; id: string } | null {
+  if (t.port_id) return { type: "port", id: t.port_id };
+  if (t.host_id) return { type: "host", id: t.host_id };
+  if (t.subnet_id) return { type: "subnet", id: t.subnet_id };
+  return null;
+}
+
 export function TodosPanel({ projectId, onToast, onFocusNode, onFocusTodo, refreshTrigger, subnets, hosts, portsByHost, users = [] }: TodosPanelProps) {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -142,13 +149,15 @@ export function TodosPanel({ projectId, onToast, onFocusNode, onFocusTodo, refre
   const focusTodo = (t: Todo) => {
     if (onFocusTodo && (t.host_id || t.subnet_id || t.port_id)) {
       onFocusTodo(t);
-    } else if (t.port_id && onFocusNode) {
-      onFocusNode({ type: "port", id: t.port_id });
-    } else if (t.host_id && onFocusNode) {
-      onFocusNode({ type: "host", id: t.host_id });
-    } else if (t.subnet_id && onFocusNode) {
-      onFocusNode({ type: "subnet", id: t.subnet_id });
+    } else {
+      const node = todoFocusNode(t);
+      if (node && onFocusNode) onFocusNode(node);
     }
+  };
+
+  const focusObject = (t: Todo) => {
+    const node = todoFocusNode(t);
+    if (node && onFocusNode) onFocusNode(node);
   };
 
   return (
@@ -218,7 +227,27 @@ export function TodosPanel({ projectId, onToast, onFocusNode, onFocusTodo, refre
                   <strong>{t.title}</strong>
                   {(subnets || hosts || portsByHost) && todoLinkLabel(t, subnets, hosts, portsByHost) && (
                     <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
-                      → {todoLinkLabel(t, subnets, hosts, portsByHost)}
+                      →{" "}
+                      <button
+                        type="button"
+                        style={{
+                          background: "none",
+                          border: "none",
+                          padding: 0,
+                          color: "var(--link)",
+                          cursor: "pointer",
+                          textDecoration: "underline",
+                          font: "inherit",
+                        }}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          focusObject(t);
+                        }}
+                        title="Jump to this object in the navigation"
+                      >
+                        {todoLinkLabel(t, subnets, hosts, portsByHost)}
+                      </button>
                     </div>
                   )}
                   {t.description && (
