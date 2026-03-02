@@ -4749,6 +4749,18 @@ export default function MissionDetailPage() {
                 toggleExpand("todos-root");
                 setSelectedNode({ type: "todos" });
               }}
+              onContextMenu={(ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                setContextMenu({
+                  x: ev.clientX,
+                  y: ev.clientY,
+                  items: [
+                    { label: "Expand/Collapse", onClick: () => toggleExpand("todos-root") },
+                    { label: "Add Todo", onClick: () => setSelectedNode({ type: "todo-new", parentType: "scope", contextLabel: "Mission" }) },
+                  ],
+                });
+              }}
             >
               <span style={{ width: 14 }}>{expanded.has("todos-root") ? "▼" : "▶"}</span>
               <CheckSquare style={navIconStyle} />
