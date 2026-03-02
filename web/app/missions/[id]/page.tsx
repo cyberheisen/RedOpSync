@@ -1291,16 +1291,33 @@ export default function MissionDetailPage() {
     return map;
   }, [itemTags]);
 
-  /** Host IDs that have a given tag (for tag-filter in tree). */
+  const portIdToHostId = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const [hostId, portList] of Object.entries(portsByHost)) {
+      for (const p of portList) {
+        map[p.id] = hostId;
+      }
+    }
+    return map;
+  }, [portsByHost]);
+
+  /** Host IDs that have a given tag (for tag-filter in tree). Includes hosts tagged directly and hosts that have a tagged port. */
   const hostIdsByTagId = useMemo(() => {
     const map: Record<string, Set<string>> = {};
     for (const it of itemTags) {
-      if (it.target_type !== "host") continue;
-      if (!map[it.tag_id]) map[it.tag_id] = new Set();
-      map[it.tag_id].add(it.target_id);
+      let hostId: string | null = null;
+      if (it.target_type === "host") {
+        hostId = it.target_id;
+      } else if (it.target_type === "port") {
+        hostId = portIdToHostId[it.target_id] ?? null;
+      }
+      if (hostId) {
+        if (!map[it.tag_id]) map[it.tag_id] = new Set();
+        map[it.tag_id].add(hostId);
+      }
     }
     return map;
-  }, [itemTags]);
+  }, [itemTags, portIdToHostId]);
 
   const getItemTagsFor = useCallback(
     (targetType: string, targetId: string) => itemTagsByTarget[`${targetType}:${targetId}`] ?? [],
