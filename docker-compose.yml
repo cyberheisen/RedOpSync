@@ -10,6 +10,12 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d redopsync"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
 
   redis:
     image: redis:7
@@ -23,8 +29,10 @@ services:
     restart: unless-stopped
     env_file: .env
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 60s
@@ -43,9 +51,12 @@ services:
     restart: unless-stopped
     env_file: .env
     depends_on:
-      - api
-      - redis
-      - postgres
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     command: ["bash", "-lc", "python -m worker.run"]
     volumes:
       - attachments:/data/attachments
