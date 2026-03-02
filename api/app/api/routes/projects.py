@@ -18,7 +18,7 @@ from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.models.models import AuditEvent, Evidence, Host, ItemTag, Lock, Port, Project, SavedReport, Tag, User, VulnerabilityDefinition
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectSortModeUpdate, ImportFromPathBody, WhoisLookupBody, WhoisLookupResponse
-from app.schemas.tag import TagCreate, TagRead, ItemTagCreate, ItemTagRead, ItemTagBulkCreate, ItemTagBulkResponse
+from app.schemas.tag import TagCreate, TagUpdate, TagRead, ItemTagCreate, ItemTagRead, ItemTagBulkCreate, ItemTagBulkResponse
 from app.schemas.report import (
     ReportRunRequest,
     ReportRunResponse,
@@ -1332,6 +1332,29 @@ def create_tag(
         raise HTTPException(status_code=404, detail="Project not found")
     tag = Tag(project_id=project_id, name=body.name, color=body.color)
     db.add(tag)
+    db.commit()
+    db.refresh(tag)
+    return TagRead.model_validate(tag)
+
+
+@router.patch("/{project_id}/tags/{tag_id}", response_model=TagRead)
+def update_tag(
+    project_id: UUID,
+    tag_id: UUID,
+    body: TagUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update a tag's name and/or color."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    tag = db.query(Tag).filter(Tag.id == tag_id, Tag.project_id == project_id).first()
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    data = body.model_dump(exclude_unset=True)
+    for k, v in data.items():
+        setattr(tag, k, v)
     db.commit()
     db.refresh(tag)
     return TagRead.model_validate(tag)

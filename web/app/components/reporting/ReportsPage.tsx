@@ -25,9 +25,11 @@ const DEFAULT_SOURCES: SourceId[] = ["core", "nmap", "http", "gowitness", "whois
 type Props = {
   projectId: string;
   onToast?: (msg: string) => void;
+  /** Called after a successful bulk tag (Tag all) so the mission nav pane can refresh item tags */
+  onTagsChanged?: () => void;
 };
 
-export function ReportsPage({ projectId, onToast }: Props) {
+export function ReportsPage({ projectId, onToast, onTagsChanged }: Props) {
   const [sources, setSources] = useState<SourceId[]>(DEFAULT_SOURCES);
   const [fields, setFields] = useState<FieldMetadata[]>([]);
   const [columns, setColumns] = useState<ColumnWithSort[]>([]);
@@ -511,6 +513,7 @@ export function ReportsPage({ projectId, onToast }: Props) {
                         })
                         .then((data: { created: number; skipped: number }) => {
                           setTagPickerOpen(false);
+                          onTagsChanged?.();
                           if (data.skipped > 0) {
                             onToast?.(`Tag applied: ${data.created} created, ${data.skipped} already had tag`);
                           } else {

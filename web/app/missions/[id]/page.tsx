@@ -862,6 +862,14 @@ export default function MissionDetailPage() {
   const [createTagName, setCreateTagName] = useState("");
   const [createTagColor, setCreateTagColor] = useState("");
   const [createTagSaving, setCreateTagSaving] = useState(false);
+  const [standaloneCreateTagOpen, setStandaloneCreateTagOpen] = useState(false);
+  const [standaloneCreateName, setStandaloneCreateName] = useState("");
+  const [standaloneCreateColor, setStandaloneCreateColor] = useState("");
+  const [standaloneCreateSaving, setStandaloneCreateSaving] = useState(false);
+  const [editTagModal, setEditTagModal] = useState<ProjectTag | null>(null);
+  const [editTagName, setEditTagName] = useState("");
+  const [editTagColor, setEditTagColor] = useState("");
+  const [editTagSaving, setEditTagSaving] = useState(false);
 
   const TREE_WIDTH_KEY = "redopsync-tree-width";
   const defaultTreeWidth = 280;
@@ -2463,13 +2471,14 @@ export default function MissionDetailPage() {
     width: treeWidth,
     minWidth: 220,
     flexShrink: 0,
+    display: "flex",
+    flexDirection: "column",
     borderRight: "1px solid var(--border)",
-    overflowY: "auto" as const,
-    padding: "8px 0",
+    overflow: "hidden",
     fontSize: 13,
     backgroundColor: "var(--tree-bg)",
     color: "var(--text)",
-  };
+  } as const;
 
   const nodeStyle = (depth: number) =>
     ({ padding: "4px 8px 4px " + (12 + depth * 12) + "px", display: "flex", alignItems: "center", gap: 6, minHeight: 24, color: "var(--text)" } as React.CSSProperties);
@@ -3316,9 +3325,9 @@ export default function MissionDetailPage() {
     if (selectedNode.type === "custom-reports")
       return <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 14 }}>Select Report builder, Predefined reports, or a saved report from the list.</div>;
     if (selectedNode.type === "report-builder")
-      return <ReportsPage projectId={missionId} onToast={setToast} />;
+      return <ReportsPage projectId={missionId} onToast={setToast} onTagsChanged={() => setTagsVersion((v) => v + 1)} />;
     if (selectedNode.type === "predefined-reports")
-      return <CustomReportsPanel projectId={missionId} subnets={subnets} onToast={setToast} savedReports={savedReports} onSavedReportsChange={loadSavedReports} mode="all" />;
+      return <CustomReportsPanel projectId={missionId} subnets={subnets} onToast={setToast} savedReports={savedReports} onSavedReportsChange={loadSavedReports} onTagsChanged={() => setTagsVersion((v) => v + 1)} mode="all" />;
     if (selectedNode.type === "saved-report") {
       const sr = savedReports.find((r) => r.id === selectedNode.id);
       if (!sr) return <div style={{ padding: 24, color: "var(--text-muted)" }}>Saved report not found.</div>;
@@ -4168,7 +4177,7 @@ export default function MissionDetailPage() {
       </div>
       <div ref={containerRef} style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         <aside style={treeStyle}>
-          <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)", marginBottom: 4 }}>
+          <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)", flexShrink: 0, backgroundColor: "var(--tree-bg)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, backgroundColor: "var(--bg-panel)", borderRadius: 6, border: "1px solid var(--border)", padding: "4px 8px" }}>
               <Search style={{ width: 16, height: 16, opacity: 0.9, flexShrink: 0 }} title="Filter" />
               <input
@@ -4221,6 +4230,7 @@ export default function MissionDetailPage() {
               </div>
             )}
           </div>
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "8px 0" }}>
           <div
             className="theme-tree-node"
             style={{ ...nodeStyle(0), paddingLeft: 12, fontWeight: 600, color: scopeSeverity ? getSeverityColor(scopeSeverity) : "var(--text)" }}
@@ -4828,6 +4838,18 @@ export default function MissionDetailPage() {
                 toggleExpand("tags-root");
                 setSelectedNode({ type: "tags" });
               }}
+              onContextMenu={(ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                setContextMenu({
+                  x: ev.clientX,
+                  y: ev.clientY,
+                  items: [
+                    { label: "Expand/Collapse", onClick: () => toggleExpand("tags-root") },
+                    { label: "Create tag", onClick: () => { setStandaloneCreateTagOpen(true); setStandaloneCreateName(""); setStandaloneCreateColor(""); } },
+                  ],
+                });
+              }}
             >
               <span style={{ width: 14 }}>{expanded.has("tags-root") ? "▼" : "▶"}</span>
               <Hash style={navIconStyle} />
@@ -4856,6 +4878,28 @@ export default function MissionDetailPage() {
                             setActiveTagFilterState({ tagId: t.id, tagName: t.name });
                             setSelectedNode({ type: "tag-filter", tagId: t.id, tagName: t.name });
                           }
+                        }}
+                        onContextMenu={(ev) => {
+                          ev.preventDefault();
+                          ev.stopPropagation();
+                          setContextMenu({
+                            x: ev.clientX,
+                            y: ev.clientY,
+                            items: [
+                              { label: "Edit", onClick: () => { setEditTagModal(t); setEditTagName(t.name); setEditTagColor(t.color ?? ""); } },
+                              { label: "Delete", onClick: () => {
+                                if (!missionId) return;
+                                fetch(apiUrl(`/api/projects/${missionId}/tags/${t.id}`), { method: "DELETE", credentials: "include" })
+                                  .then((r) => { if (!r.ok) return r.json().then((d) => Promise.reject(d)); })
+                                  .then(() => {
+                                    setTagsVersion((v) => v + 1);
+                                    if (activeTagFilterState?.tagId === t.id) { setActiveTagFilterState(null); setSelectedNode({ type: "tags" }); }
+                                    setToast(`Tag "${t.name}" deleted`);
+                                  })
+                                  .catch((err) => setToast(formatApiErrorDetail(err?.detail ?? err, "Delete failed")));
+                              } },
+                            ],
+                          });
                         }}
                       >
                         <span style={{ width: 14 }}><Hash style={{ width: 12, height: 12, opacity: 0.9 }} /></span>
@@ -5073,6 +5117,7 @@ export default function MissionDetailPage() {
               </div>
             </>
           )}
+          </div>
         </aside>
         <div
           role="separator"
@@ -5466,6 +5511,118 @@ export default function MissionDetailPage() {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+      {standaloneCreateTagOpen && (
+        <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={() => { setStandaloneCreateTagOpen(false); setStandaloneCreateName(""); setStandaloneCreateColor(""); }}>
+          <div style={{ backgroundColor: "var(--bg-panel)", borderRadius: 8, border: "1px solid var(--border)", padding: 24, minWidth: 260, maxWidth: 360 }} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ margin: "0 0 12px", fontSize: "1.1rem" }}>Create tag</h2>
+            <label style={{ display: "block", marginBottom: 4, fontSize: 14 }}>Tag name</label>
+            <input
+              type="text"
+              className="theme-input"
+              value={standaloneCreateName}
+              onChange={(e) => setStandaloneCreateName(e.target.value)}
+              placeholder="e.g. Critical"
+              style={{ width: "100%", marginBottom: 12 }}
+              autoFocus
+            />
+            <label style={{ display: "block", marginBottom: 4, fontSize: 14 }}>Color (optional)</label>
+            <input
+              type="text"
+              className="theme-input"
+              value={standaloneCreateColor}
+              onChange={(e) => setStandaloneCreateColor(e.target.value)}
+              placeholder="e.g. #ff0000 or red"
+              style={{ width: "100%", marginBottom: 12 }}
+            />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="theme-btn theme-btn-ghost" onClick={() => { setStandaloneCreateTagOpen(false); setStandaloneCreateName(""); setStandaloneCreateColor(""); }} disabled={standaloneCreateSaving}>Cancel</button>
+              <button
+                type="button"
+                className="theme-btn theme-btn-primary"
+                disabled={!standaloneCreateName.trim() || standaloneCreateSaving}
+                onClick={() => {
+                  if (!missionId || !standaloneCreateName.trim()) return;
+                  setStandaloneCreateSaving(true);
+                  fetch(apiUrl(`/api/projects/${missionId}/tags`), {
+                    method: "POST",
+                    credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name: standaloneCreateName.trim(), color: standaloneCreateColor.trim() || null }),
+                  })
+                    .then((r) => (r.ok ? r.json() : r.json().then((d) => Promise.reject(d))))
+                    .then(() => {
+                      setTagsVersion((v) => v + 1);
+                      setStandaloneCreateTagOpen(false);
+                      setStandaloneCreateName("");
+                      setStandaloneCreateColor("");
+                      setToast("Tag created");
+                    })
+                    .catch((err) => setToast(formatApiErrorDetail(err?.detail ?? err, "Failed to create tag")))
+                    .finally(() => setStandaloneCreateSaving(false));
+                }}
+              >
+                {standaloneCreateSaving ? "Creating…" : "Create"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {editTagModal && (
+        <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={() => { setEditTagModal(null); }}>
+          <div style={{ backgroundColor: "var(--bg-panel)", borderRadius: 8, border: "1px solid var(--border)", padding: 24, minWidth: 260, maxWidth: 360 }} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ margin: "0 0 12px", fontSize: "1.1rem" }}>Edit tag</h2>
+            <label style={{ display: "block", marginBottom: 4, fontSize: 14 }}>Tag name</label>
+            <input
+              type="text"
+              className="theme-input"
+              value={editTagName}
+              onChange={(e) => setEditTagName(e.target.value)}
+              placeholder="e.g. Critical"
+              style={{ width: "100%", marginBottom: 12 }}
+              autoFocus
+            />
+            <label style={{ display: "block", marginBottom: 4, fontSize: 14 }}>Color (optional)</label>
+            <input
+              type="text"
+              className="theme-input"
+              value={editTagColor}
+              onChange={(e) => setEditTagColor(e.target.value)}
+              placeholder="e.g. #ff0000 or red"
+              style={{ width: "100%", marginBottom: 12 }}
+            />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="theme-btn theme-btn-ghost" onClick={() => setEditTagModal(null)} disabled={editTagSaving}>Cancel</button>
+              <button
+                type="button"
+                className="theme-btn theme-btn-primary"
+                disabled={!editTagName.trim() || editTagSaving}
+                onClick={() => {
+                  if (!missionId || !editTagModal || !editTagName.trim()) return;
+                  setEditTagSaving(true);
+                  fetch(apiUrl(`/api/projects/${missionId}/tags/${editTagModal.id}`), {
+                    method: "PATCH",
+                    credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name: editTagName.trim(), color: editTagColor.trim() || null }),
+                  })
+                    .then((r) => (r.ok ? r.json() : r.json().then((d) => Promise.reject(d))))
+                    .then((updated: ProjectTag) => {
+                      setTagsVersion((v) => v + 1);
+                      setProjectTags((prev) => prev.map((p) => (p.id === updated.id ? { ...p, name: updated.name, color: updated.color } : p)));
+                      if (activeTagFilterState?.tagId === editTagModal.id) setActiveTagFilterState({ tagId: updated.id, tagName: updated.name });
+                      setEditTagModal(null);
+                      setToast("Tag updated");
+                    })
+                    .catch((err) => setToast(formatApiErrorDetail(err?.detail ?? err, "Failed to update tag")))
+                    .finally(() => setEditTagSaving(false));
+                }}
+              >
+                {editTagSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -34,6 +34,8 @@ type CustomReportsPanelProps = {
   onToast?: (msg: string) => void;
   savedReports?: SavedReportItem[];
   onSavedReportsChange?: () => void;
+  /** Called after a successful bulk tag (Tag all) so the mission nav pane can refresh item tags */
+  onTagsChanged?: () => void;
   /** "all" = both sections (default), "builder" = report builder only, "predefined" = predefined reports only */
   mode?: "all" | "builder" | "predefined";
 };
@@ -86,7 +88,7 @@ const FILTER_EXAMPLES = [
   "unresolved == false",
 ];
 
-export function CustomReportsPanel({ projectId, subnets, onToast, savedReports = [], onSavedReportsChange, mode = "all" }: CustomReportsPanelProps) {
+export function CustomReportsPanel({ projectId, subnets, onToast, savedReports = [], onSavedReportsChange, onTagsChanged, mode = "all" }: CustomReportsPanelProps) {
   const [builderColumns, setBuilderColumns] = useState<BuilderColumns>({});
   const [builderDataSource, setBuilderDataSource] = useState("hosts");
   const [builderSelectedCols, setBuilderSelectedCols] = useState<string[]>(["ip", "hostname"]);
@@ -587,6 +589,7 @@ export function CustomReportsPanel({ projectId, subnets, onToast, savedReports =
                           })
                           .then((data: { created: number; skipped: number }) => {
                             setTagPickerOpen(false);
+                            onTagsChanged?.();
                             if (data.skipped > 0) {
                               onToast?.(`Tag applied: ${data.created} created, ${data.skipped} already had tag`);
                             } else {
