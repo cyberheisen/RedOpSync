@@ -225,6 +225,9 @@ class Evidence(Base):
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     thumbnail_path = Column(String(1024), nullable=True)
+    parent_evidence_id = Column(
+        UUID(as_uuid=True), ForeignKey("evidence.id", ondelete="CASCADE"), nullable=True, index=True
+    )
 
     uploaded_by = relationship("User", backref="evidence")
 

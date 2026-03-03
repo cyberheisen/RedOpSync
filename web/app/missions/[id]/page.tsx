@@ -119,6 +119,7 @@ type NoteAttachmentDisplay = { id: string; filename: string; type: string; url: 
 
 type PortEvidence = {
   id: string;
+  parent_evidence_id: string | null;
   filename: string;
   caption: string | null;
   mime: string | null;
@@ -2896,69 +2897,114 @@ export default function MissionDetailPage() {
                               <div className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 3), color: "var(--text-muted)" }}>Loading…</div>
                             ) : evList.length === 0 ? (
                               <div className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 3), color: "var(--text-dim)", fontStyle: "italic" }}>No reports</div>
-                            ) : (
-                              evList.map((ev) => {
-                                const evSel = selectedNode?.type === "port-evidence" && selectedNode.id === ev.id;
-                                const label = ev.caption || ev.filename;
-                                return (
-                                  <div key={ev.id}>
-                                    <div
-                                      className={"theme-tree-node" + (evSel ? " selected" : "")}
-                                      style={nodeStyle(baseDepth + 3)}
-                                      onClick={(evt) => {
-                                        evt.stopPropagation();
-                                        setSelectedNode({ type: "port-evidence", id: ev.id, portId: p.id, hostId: h.id });
-                                      }}
-                                      onContextMenu={(evt) => {
-                                        evt.preventDefault();
-                                        evt.stopPropagation();
-                                        setContextMenu({
-                                          x: evt.clientX,
-                                          y: evt.clientY,
-                                          items: [
-                                            { label: "Add note", onClick: () => setNoteModal({ mode: "add", target: "evidence", evidence: ev }) },
-                                            { label: "Add tag", onClick: () => setAddTagModal({ targetType: "port_evidence", targetId: ev.id, portId: p.id, hostId: h.id }) },
-                                            { label: "Delete", onClick: () => handleDeleteEvidence(p.id, ev.id, h.id) },
-                                          ],
-                                        });
-                                      }}
-                                    >
-                                      <span style={{ width: 14 }}>•</span>
-                                      <span style={{ fontSize: 13 }}>{label}</span>
-                                    </div>
-                                    {getItemTagsFor("port_evidence", ev.id).map((it) => {
-                                      const isTagSel = selectedNode?.type === "tag" && selectedNode.itemTagId === it.id;
+                            ) : (() => {
+                              const topLevel = evList.filter((ev) => !ev.parent_evidence_id);
+                              const childrenByParentId: Record<string, PortEvidence[]> = {};
+                              evList.forEach((ev) => {
+                                const pid = ev.parent_evidence_id;
+                                if (pid) {
+                                  if (!childrenByParentId[pid]) childrenByParentId[pid] = [];
+                                  childrenByParentId[pid].push(ev);
+                                }
+                              });
+                              const isWebDirParent = (ev: PortEvidence) =>
+                                (ev.source || "").toLowerCase() === "gobuster" && ev.caption === "Web Directories";
+                              const renderEvidenceRow = (ev: PortEvidence, depth: number) => (
+                                <div key={ev.id}>
+                                  <div
+                                    className={"theme-tree-node" + (selectedNode?.type === "port-evidence" && selectedNode.id === ev.id ? " selected" : "")}
+                                    style={nodeStyle(depth)}
+                                    onClick={(evt) => {
+                                      evt.stopPropagation();
+                                      setSelectedNode({ type: "port-evidence", id: ev.id, portId: p.id, hostId: h.id });
+                                    }}
+                                    onContextMenu={(evt) => {
+                                      evt.preventDefault();
+                                      evt.stopPropagation();
+                                      setContextMenu({
+                                        x: evt.clientX,
+                                        y: evt.clientY,
+                                        items: [
+                                          { label: "Add note", onClick: () => setNoteModal({ mode: "add", target: "evidence", evidence: ev }) },
+                                          { label: "Add tag", onClick: () => setAddTagModal({ targetType: "port_evidence", targetId: ev.id, portId: p.id, hostId: h.id }) },
+                                          { label: "Delete", onClick: () => handleDeleteEvidence(p.id, ev.id, h.id) },
+                                        ],
+                                      });
+                                    }}
+                                  >
+                                    <span style={{ width: 14 }}>•</span>
+                                    <span style={{ fontSize: 13 }}>{ev.caption || ev.filename}</span>
+                                  </div>
+                                  {getItemTagsFor("port_evidence", ev.id).map((it) => {
+                                    const isTagSel = selectedNode?.type === "tag" && selectedNode.itemTagId === it.id;
+                                    return (
+                                      <div
+                                        key={it.id}
+                                        className={"theme-tree-node" + (isTagSel ? " selected" : "")}
+                                        style={{ ...nodeStyle(depth + 1), color: it.tag_color ?? "var(--text-muted)" }}
+                                        onClick={(evt) => { evt.stopPropagation(); setSelectedNode({ type: "tag", itemTagId: it.id, tagId: it.tag_id, tagName: it.tag_name ?? "", targetType: "port_evidence", targetId: ev.id, portId: p.id, hostId: h.id }); }}
+                                        onContextMenu={(evt) => {
+                                          evt.preventDefault();
+                                          evt.stopPropagation();
+                                          setContextMenu({
+                                            x: evt.clientX,
+                                            y: evt.clientY,
+                                            items: [{ label: "Remove tag", onClick: () => handleRemoveItemTag(it.id) }],
+                                          });
+                                        }}
+                                      >
+                                        <span style={{ width: 14 }}>🏷</span>
+                                        <span>{it.tag_name ?? ""}</span>
+                                      </div>
+                                    );
+                                  })}
+                                  {projectNotes.filter((n) => n.target_type === "evidence" && n.target_id === ev.id).map((n) => {
+                                    const isNoteSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "evidence";
+                                    const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
+                                    return (
+                                      <div
+                                        key={n.id}
+                                        className={"theme-tree-node" + (isNoteSel ? " selected" : "")}
+                                        style={{ ...nodeStyle(depth + 1), color: "var(--text-muted)" }}
+                                        onClick={(evt) => { evt.stopPropagation(); setSelectedNode({ type: "note", id: n.id, target: "evidence", targetId: ev.id }); }}
+                                        onContextMenu={(evt) => {
+                                          evt.preventDefault();
+                                          evt.stopPropagation();
+                                          setContextMenu({
+                                            x: evt.clientX,
+                                            y: evt.clientY,
+                                            items: [
+                                              { label: "Edit", onClick: () => setNoteModal({ mode: "edit", target: "evidence", evidence: ev, note: n }) },
+                                              { label: "Delete", onClick: () => setDeleteNoteModal({ note: n, target: "evidence", evidence: ev }) },
+                                              { label: "Print Note", onClick: () => setNotePrintView({ note: n, target: "evidence", evidence: ev }) },
+                                            ],
+                                          });
+                                        }}
+                                      >
+                                        <span style={{ width: 14 }}>≡</span>
+                                        <span style={{ fontStyle: "italic" }}>{noteTitle}{noteTitle.length >= 40 ? "…" : ""}</span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              );
+                              return (
+                                <>
+                                  {topLevel.map((ev) => {
+                                    if (isWebDirParent(ev)) {
+                                      const webDirKey = `web-dirs:${ev.id}`;
+                                      const webDirExp = expanded.has(webDirKey);
+                                      const children = childrenByParentId[ev.id] ?? [];
                                       return (
-                                        <div
-                                          key={it.id}
-                                          className={"theme-tree-node" + (isTagSel ? " selected" : "")}
-                                          style={{ ...nodeStyle(baseDepth + 4), color: it.tag_color ?? "var(--text-muted)" }}
-                                          onClick={(evt) => { evt.stopPropagation(); setSelectedNode({ type: "tag", itemTagId: it.id, tagId: it.tag_id, tagName: it.tag_name ?? "", targetType: "port_evidence", targetId: ev.id, portId: p.id, hostId: h.id }); }}
-                                          onContextMenu={(evt) => {
-                                            evt.preventDefault();
-                                            evt.stopPropagation();
-                                            setContextMenu({
-                                              x: evt.clientX,
-                                              y: evt.clientY,
-                                              items: [{ label: "Remove tag", onClick: () => handleRemoveItemTag(it.id) }],
-                                            });
-                                          }}
-                                        >
-                                          <span style={{ width: 14 }}>🏷</span>
-                                          <span>{it.tag_name ?? ""}</span>
-                                        </div>
-                                      );
-                                    })}
-                                    {/* Evidence notes as child nodes */}
-                                    {projectNotes.filter((n) => n.target_type === "evidence" && n.target_id === ev.id).map((n) => {
-                                        const isNoteSel = selectedNode?.type === "note" && selectedNode.id === n.id && selectedNode.target === "evidence";
-                                        const noteTitle = (n as Note & { title?: string }).title || (n.body_md?.split("\n")[0]?.slice(0, 40) ?? "Untitled");
-                                        return (
+                                        <div key={ev.id}>
                                           <div
-                                            key={n.id}
-                                            className={"theme-tree-node" + (isNoteSel ? " selected" : "")}
-                                            style={{ ...nodeStyle(baseDepth + 4), color: "var(--text-muted)" }}
-                                            onClick={(evt) => { evt.stopPropagation(); setSelectedNode({ type: "note", id: n.id, target: "evidence", targetId: ev.id }); }}
+                                            className={"theme-tree-node" + (selectedNode?.type === "port-evidence" && selectedNode.id === ev.id ? " selected" : "")}
+                                            style={nodeStyle(baseDepth + 3)}
+                                            onClick={(evt) => {
+                                              evt.stopPropagation();
+                                              toggleExpand(webDirKey);
+                                              setSelectedNode({ type: "port-evidence", id: ev.id, portId: p.id, hostId: h.id });
+                                            }}
                                             onContextMenu={(evt) => {
                                               evt.preventDefault();
                                               evt.stopPropagation();
@@ -2966,22 +3012,26 @@ export default function MissionDetailPage() {
                                                 x: evt.clientX,
                                                 y: evt.clientY,
                                                 items: [
-                                                  { label: "Edit", onClick: () => setNoteModal({ mode: "edit", target: "evidence", evidence: ev, note: n }) },
-                                                  { label: "Delete", onClick: () => setDeleteNoteModal({ note: n, target: "evidence", evidence: ev }) },
-                                                  { label: "Print Note", onClick: () => setNotePrintView({ note: n, target: "evidence", evidence: ev }) },
+                                                  { label: "Add note", onClick: () => setNoteModal({ mode: "add", target: "evidence", evidence: ev }) },
+                                                  { label: "Add tag", onClick: () => setAddTagModal({ targetType: "port_evidence", targetId: ev.id, portId: p.id, hostId: h.id }) },
+                                                  { label: "Delete", onClick: () => handleDeleteEvidence(p.id, ev.id, h.id) },
                                                 ],
                                               });
                                             }}
                                           >
-                                            <span style={{ width: 14 }}>≡</span>
-                                            <span style={{ fontStyle: "italic" }}>{noteTitle}{noteTitle.length >= 40 ? "…" : ""}</span>
+                                            <span style={{ width: 14 }}>{webDirExp ? "▼" : "▶"}</span>
+                                            <span style={{ fontSize: 13 }}>Web Directories</span>
+                                            <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({children.length})</span>
                                           </div>
-                                        );
-                                      })}
-                                  </div>
-                                );
-                              })
-                            )}
+                                          {webDirExp && children.map((child) => renderEvidenceRow(child, baseDepth + 4))}
+                                        </div>
+                                      );
+                                    }
+                                    return renderEvidenceRow(ev, baseDepth + 3);
+                                  })}
+                                </>
+                              );
+                            })()}
                           </>
                         )}
                       </div>
@@ -3325,6 +3375,13 @@ export default function MissionDetailPage() {
           ) : (
             <div style={{ fontSize: 15, lineHeight: 1.6 }}>{ev.caption || ev.filename}</div>
           )}
+          {!isImage && ev.notes_md && ev.notes_md.trim() ? (
+            <div
+              className="note-markdown-content"
+              style={{ marginTop: 16, lineHeight: 1.6 }}
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(ev.notes_md) || "" }}
+            />
+          ) : null}
         </div>
       );
     }

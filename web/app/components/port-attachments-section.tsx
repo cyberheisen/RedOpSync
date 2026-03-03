@@ -48,7 +48,10 @@ export function PortAttachmentsSection({ portId, canEdit, onRefresh }: Props) {
       .then((r) => (r.ok ? r.json() : []))
       .then((data: Attachment[]) => {
         // Exclude gowitness evidence — it belongs in the tree, not here
-        setAttachments((data || []).filter((a) => (a.source || "").toLowerCase() !== "gowitness"));
+        setAttachments((data || []).filter((a) => {
+          const src = (a.source || "").toLowerCase();
+          return src !== "gowitness" && src !== "gobuster";
+        }));
       })
       .finally(() => setLoading(false));
   }, [portId]);

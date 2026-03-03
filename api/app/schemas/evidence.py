@@ -10,6 +10,7 @@ class EvidenceNotesUpdate(BaseModel):
 class EvidenceRead(BaseModel):
     id: UUID
     port_id: UUID | None
+    parent_evidence_id: UUID | None = None
     filename: str
     caption: str | None = None
     mime: str | None

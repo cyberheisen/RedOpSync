@@ -50,6 +50,7 @@ class PortRead(BaseModel):
 
 class PortAttachmentSummary(BaseModel):
     id: UUID
+    parent_evidence_id: UUID | None = None
     filename: str
     caption: str | None = None
     mime: str | None

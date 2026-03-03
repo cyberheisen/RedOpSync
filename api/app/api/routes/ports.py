@@ -113,6 +113,7 @@ def get_port(
     att_list = [
         PortAttachmentSummary(
             id=a.id,
+            parent_evidence_id=a.parent_evidence_id,
             filename=a.filename,
             caption=a.caption,
             mime=a.mime,
@@ -194,6 +195,7 @@ def list_port_attachments(
         EvidenceRead(
             id=a.id,
             port_id=a.port_id,
+            parent_evidence_id=a.parent_evidence_id,
             filename=a.filename,
             caption=a.caption,
             mime=a.mime,
@@ -259,6 +261,7 @@ def upload_port_attachment(
     return EvidenceRead(
         id=ev.id,
         port_id=ev.port_id,
+        parent_evidence_id=ev.parent_evidence_id,
         filename=ev.filename,
         mime=ev.mime,
         size=ev.size,
@@ -318,6 +321,7 @@ def paste_port_screenshot(
     return EvidenceRead(
         id=ev.id,
         port_id=ev.port_id,
+        parent_evidence_id=ev.parent_evidence_id,
         filename="Pasted Screenshot",
         mime=ev.mime,
         size=ev.size,
@@ -374,6 +378,7 @@ def update_port_attachment_notes(
     return EvidenceRead(
         id=ev.id,
         port_id=ev.port_id,
+        parent_evidence_id=ev.parent_evidence_id,
         filename=ev.filename,
         caption=ev.caption,
         mime=ev.mime,
