@@ -5,8 +5,8 @@ Supported formats:
 - Nmap XML (-oX)
 - GoWitness (ZIP with PNG/JPEG and/or JSONL)
 - Plain text (.txt) - one host per line: IP [hostname], or Gobuster dir text output
-- Whois/RDAP JSON (.json) - array of { ip, asn, ... }; or Gobuster JSON output
-- Gobuster directory scan (.txt or .json)
+- Whois/RDAP JSON (.json) - array of { ip, asn, ... }; or FFuf JSON output (-of json)
+- FFuf directory fuzzing (JSON); Gobuster directory scan (.txt)
 """
 from __future__ import annotations
 
@@ -19,6 +19,8 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.services.ffuf_parser import is_ffuf_content as _is_ffuf_content
+from app.services.ffuf_import import run_ffuf_import as _run_ffuf
 from app.services.gobuster_parser import is_gobuster_content as _is_gobuster_content
 from app.services.gobuster_import import run_gobuster_import as _run_gobuster
 from app.services.gowitness_import import run_gowitness_import as _run_gowitness
@@ -36,6 +38,7 @@ IMPORT_FORMAT_TEXT = "text"
 IMPORT_FORMAT_WHOIS = "whois"
 IMPORT_FORMAT_MASSCAN = "masscan"
 IMPORT_FORMAT_GOBUSTER = "gobuster"
+IMPORT_FORMAT_FFUF = "ffuf"
 
 
 def _looks_like_whois_json(content: bytes) -> bool:
@@ -75,9 +78,11 @@ def detect_import_format(content: bytes, filename: str) -> tuple[str | None, str
     if fn.endswith(".json"):
         if _looks_like_whois_json(content):
             return IMPORT_FORMAT_WHOIS, ""
+        if _is_ffuf_content(content, filename):
+            return IMPORT_FORMAT_FFUF, ""
         if _is_gobuster_content(content, filename):
             return IMPORT_FORMAT_GOBUSTER, ""
-        return None, "JSON file must be an array of whois/rdap objects with 'ip' field or Gobuster JSON output."
+        return None, "JSON file must be an array of whois/rdap objects with 'ip' field or FFuf JSON output (-of json)."
 
     if fn.endswith(".xml"):
         if detect_nmap_format(content, filename) == "xml":
@@ -292,6 +297,9 @@ def run_import(
 
     if fmt == IMPORT_FORMAT_GOBUSTER:
         return _run_gobuster(db, project_id, content, filename, user_id, request_ip)
+
+    if fmt == IMPORT_FORMAT_FFUF:
+        return _run_ffuf(db, project_id, content, filename, user_id, request_ip)
 
     raise ValueError(err or "Unsupported file format.")
 

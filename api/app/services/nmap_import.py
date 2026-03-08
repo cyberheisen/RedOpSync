@@ -137,6 +137,21 @@ def _build_service_banner(nh_port) -> str:
     return " ".join(parts).strip() if parts else ""
 
 
+def _parse_http_methods_from_script(script_output: str) -> list[str]:
+    """Parse http-methods NSE script output; return list of supported method names.
+    Example: 'Supported Methods: GET HEAD POST PUT DELETE OPTIONS' -> ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'OPTIONS'].
+    """
+    if not (script_output or "").strip():
+        return []
+    prefix = "Supported Methods:"
+    for line in script_output.splitlines():
+        line = line.strip()
+        if line.startswith(prefix):
+            rest = line[len(prefix) :].strip()
+            return [m for m in rest.split() if m] if rest else []
+    return []
+
+
 def _build_scan_metadata(
     nh_port,
     import_metadata: NmapImportMetadata | None,
@@ -155,6 +170,13 @@ def _build_scan_metadata(
         meta["service_method"] = nh_port.service_method
     if getattr(nh_port, "devicetype", None):
         meta["devicetype"] = nh_port.devicetype
+    scripts = getattr(nh_port, "scripts", None) or []
+    scripts_by_id = {s.id: s for s in scripts if getattr(s, "id", None)}
+    http_methods_script = scripts_by_id.get("http-methods")
+    if http_methods_script and getattr(http_methods_script, "output", None):
+        methods = _parse_http_methods_from_script(http_methods_script.output)
+        if methods:
+            meta["http_methods"] = methods
     if import_metadata and import_metadata.args:
         meta["nmap_args"] = import_metadata.args
     if host_starttime:

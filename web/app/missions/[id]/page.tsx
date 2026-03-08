@@ -175,6 +175,7 @@ type SelectedNode =
   | { type: "host-whois-field"; hostId: string; field: "network" | "asn" | "country" | "cidr" | "type" | "registry" }
   | { type: "port"; id: string }
   | { type: "port-evidence"; id: string; portId: string; hostId: string }
+  | { type: "port-http-methods"; portId: string; hostId: string }
   | { type: "host-vulnerabilities"; hostId: string }
   | { type: "vuln-instance"; id: string }
   | { type: "vuln-definition"; id: string }
@@ -1423,7 +1424,10 @@ export default function MissionDetailPage() {
         out.add(`host:${h.id}`);
         out.add(`host-ports:${h.id}`);
         out.add(`host-vulns:${h.id}`);
-        (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+        (portsByHost[h.id] ?? []).forEach((p) => {
+          out.add(`port-evidence:${p.id}`);
+          if ((p.scan_metadata?.http_methods as string[] | undefined)?.length) out.add(`http-methods:${p.id}`);
+        });
       });
       out.add("out-of-scope");
       outOfScopeSubnets.forEach((s) => {
@@ -1432,14 +1436,20 @@ export default function MissionDetailPage() {
           out.add(`host:${h.id}`);
           out.add(`host-ports:${h.id}`);
           out.add(`host-vulns:${h.id}`);
-          (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+          (portsByHost[h.id] ?? []).forEach((p) => {
+          out.add(`port-evidence:${p.id}`);
+          if ((p.scan_metadata?.http_methods as string[] | undefined)?.length) out.add(`http-methods:${p.id}`);
+        });
         });
       });
       standaloneOutOfScopeHosts.forEach((h) => {
         out.add(`host:${h.id}`);
         out.add(`host-ports:${h.id}`);
         out.add(`host-vulns:${h.id}`);
-        (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+        (portsByHost[h.id] ?? []).forEach((p) => {
+          out.add(`port-evidence:${p.id}`);
+          if ((p.scan_metadata?.http_methods as string[] | undefined)?.length) out.add(`http-methods:${p.id}`);
+        });
       });
       return out;
     }
@@ -1449,14 +1459,20 @@ export default function MissionDetailPage() {
         out.add(`host:${h.id}`);
         out.add(`host-ports:${h.id}`);
         out.add(`host-vulns:${h.id}`);
-        (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+        (portsByHost[h.id] ?? []).forEach((p) => {
+          out.add(`port-evidence:${p.id}`);
+          if ((p.scan_metadata?.http_methods as string[] | undefined)?.length) out.add(`http-methods:${p.id}`);
+        });
       });
       inScopeSubnets.forEach((s) => {
         (hostsBySubnet[s.id] ?? []).filter((h) => h.in_scope !== false).forEach((h) => {
           out.add(`host:${h.id}`);
           out.add(`host-ports:${h.id}`);
           out.add(`host-vulns:${h.id}`);
-          (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+          (portsByHost[h.id] ?? []).forEach((p) => {
+          out.add(`port-evidence:${p.id}`);
+          if ((p.scan_metadata?.http_methods as string[] | undefined)?.length) out.add(`http-methods:${p.id}`);
+        });
         });
       });
       return out;
@@ -1468,14 +1484,20 @@ export default function MissionDetailPage() {
           out.add(`host:${h.id}`);
           out.add(`host-ports:${h.id}`);
           out.add(`host-vulns:${h.id}`);
-          (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+          (portsByHost[h.id] ?? []).forEach((p) => {
+          out.add(`port-evidence:${p.id}`);
+          if ((p.scan_metadata?.http_methods as string[] | undefined)?.length) out.add(`http-methods:${p.id}`);
+        });
         });
       });
       standaloneOutOfScopeHosts.forEach((h) => {
         out.add(`host:${h.id}`);
         out.add(`host-ports:${h.id}`);
         out.add(`host-vulns:${h.id}`);
-        (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+        (portsByHost[h.id] ?? []).forEach((p) => {
+          out.add(`port-evidence:${p.id}`);
+          if ((p.scan_metadata?.http_methods as string[] | undefined)?.length) out.add(`http-methods:${p.id}`);
+        });
       });
       return out;
     }
@@ -1484,7 +1506,10 @@ export default function MissionDetailPage() {
         out.add(`host:${h.id}`);
         out.add(`host-ports:${h.id}`);
         out.add(`host-vulns:${h.id}`);
-        (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+        (portsByHost[h.id] ?? []).forEach((p) => {
+          out.add(`port-evidence:${p.id}`);
+          if ((p.scan_metadata?.http_methods as string[] | undefined)?.length) out.add(`http-methods:${p.id}`);
+        });
       });
       return out;
     }
@@ -1494,7 +1519,10 @@ export default function MissionDetailPage() {
         out.add(`host:${h.id}`);
         out.add(`host-ports:${h.id}`);
         out.add(`host-vulns:${h.id}`);
-        (portsByHost[h.id] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+        (portsByHost[h.id] ?? []).forEach((p) => {
+          out.add(`port-evidence:${p.id}`);
+          if ((p.scan_metadata?.http_methods as string[] | undefined)?.length) out.add(`http-methods:${p.id}`);
+        });
       });
       return out;
     }
@@ -1502,15 +1530,21 @@ export default function MissionDetailPage() {
       const hid = key.slice(5);
       out.add(`host-ports:${hid}`);
       out.add(`host-vulns:${hid}`);
-      (portsByHost[hid] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+      (portsByHost[hid] ?? []).forEach((p) => {
+      out.add(`port-evidence:${p.id}`);
+      if ((p.scan_metadata?.http_methods as string[] | undefined)?.length) out.add(`http-methods:${p.id}`);
+    });
       return out;
     }
     if (key.startsWith("host-ports:")) {
       const hid = key.slice(11);
-      (portsByHost[hid] ?? []).forEach((p) => out.add(`port-evidence:${p.id}`));
+      (portsByHost[hid] ?? []).forEach((p) => {
+      out.add(`port-evidence:${p.id}`);
+      if ((p.scan_metadata?.http_methods as string[] | undefined)?.length) out.add(`http-methods:${p.id}`);
+    });
       return out;
     }
-    if (key === "host-vulns:" || key.startsWith("host-vulns:") || key.startsWith("port-evidence:") || key === "vulnerabilities") return out;
+    if (key === "host-vulns:" || key.startsWith("host-vulns:") || key.startsWith("port-evidence:") || key.startsWith("http-methods:") || key === "vulnerabilities") return out;
     if (key === "tools") {
       out.add("tools-decoder");
       out.add("tools-prettify");
@@ -2118,6 +2152,7 @@ export default function MissionDetailPage() {
       if (selectedNode && (selectedNode.type === "host" || selectedNode.type === "host-ports" || selectedNode.type === "host-whois" || selectedNode.type === "host-whois-field" || selectedNode.type === "host-vulnerabilities") && (selectedNode.type === "host" ? selectedNode.id : selectedNode.hostId) === hostId) setSelectedNode(null);
       if (selectedNode?.type === "port" && portsByHost[hostId]?.some((p) => p.id === selectedNode.id)) setSelectedNode(null);
       if (selectedNode?.type === "port-evidence" && portIds.includes(selectedNode.portId)) setSelectedNode(null);
+      if (selectedNode?.type === "port-http-methods" && portIds.includes(selectedNode.portId)) setSelectedNode(null);
       if (selectedNode?.type === "note" && selectedNode.target === "host" && selectedNode.targetId === hostId) setSelectedNode(null);
       setToast("Host and all its ports, evidence, and notes deleted");
       refreshLocks();
@@ -2157,6 +2192,7 @@ export default function MissionDetailPage() {
       if (selectedNode && (selectedNode.type === "host" || selectedNode.type === "host-ports" || selectedNode.type === "host-whois" || selectedNode.type === "host-whois-field" || selectedNode.type === "host-vulnerabilities") && hostIdsToRemove.has(selectedNode.type === "host" ? selectedNode.id : selectedNode.hostId)) setSelectedNode(null);
       if (selectedNode?.type === "port" && portIdsToRemove.has(selectedNode.id)) setSelectedNode(null);
       if (selectedNode?.type === "port-evidence" && portIdsToRemove.has(selectedNode.portId)) setSelectedNode(null);
+      if (selectedNode?.type === "port-http-methods" && portIdsToRemove.has(selectedNode.portId)) setSelectedNode(null);
       if (selectedNode?.type === "note" && (selectedNode.targetId === subnetId || (selectedNode.target === "host" && hostIdsToRemove.has(selectedNode.targetId)))) setSelectedNode(null);
       setToast("Subnet and all hosts, ports, evidence, and notes deleted");
       refreshLocks();
@@ -2491,6 +2527,7 @@ export default function MissionDetailPage() {
     flexShrink: 0,
     display: "flex",
     flexDirection: "column",
+    minHeight: 0,
     borderRight: "1px solid var(--border)",
     overflow: "hidden",
     fontSize: 13,
@@ -2893,6 +2930,40 @@ export default function MissionDetailPage() {
                                 </div>
                               );
                             })}
+                            {(() => {
+                              const httpMethods = (p.scan_metadata?.http_methods as string[] | undefined) ?? [];
+                              if (httpMethods.length === 0) return null;
+                              const httpMethodsKey = `http-methods:${p.id}`;
+                              const httpMethodsExp = expanded.has(httpMethodsKey);
+                              const isHttpMethodsSel = selectedNode?.type === "port-http-methods" && selectedNode.portId === p.id;
+                              return (
+                                <div key={httpMethodsKey}>
+                                  <div
+                                    className={"theme-tree-node" + (isHttpMethodsSel ? " selected" : "")}
+                                    style={nodeStyle(baseDepth + 3)}
+                                    onClick={(evt) => {
+                                      evt.stopPropagation();
+                                      toggleExpand(httpMethodsKey);
+                                      setSelectedNode({ type: "port-http-methods", portId: p.id, hostId: h.id });
+                                    }}
+                                  >
+                                    <span style={{ width: 14 }}>{httpMethodsExp ? "▼" : "▶"}</span>
+                                    <span style={{ fontSize: 13 }}>HTTP methods</span>
+                                    <span style={{ color: "var(--text-muted)", fontSize: 11 }}> ({httpMethods.length})</span>
+                                  </div>
+                                  {httpMethodsExp && httpMethods.map((method) => (
+                                    <div
+                                      key={method}
+                                      className="theme-tree-node"
+                                      style={nodeStyle(baseDepth + 4)}
+                                    >
+                                      <span style={{ width: 14 }}>•</span>
+                                      <span style={{ fontSize: 13 }}>{method}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              );
+                            })()}
                             {evLoad ? (
                               <div className="theme-tree-node" style={{ ...nodeStyle(baseDepth + 3), color: "var(--text-muted)" }}>Loading…</div>
                             ) : evList.length === 0 ? (
@@ -2907,8 +2978,10 @@ export default function MissionDetailPage() {
                                   childrenByParentId[pid].push(ev);
                                 }
                               });
-                              const isWebDirParent = (ev: PortEvidence) =>
-                                (ev.source || "").toLowerCase() === "gobuster" && ev.caption === "Web Directories";
+                              const isWebDirParent = (ev: PortEvidence) => {
+                                const src = (ev.source || "").toLowerCase();
+                                return (src === "gobuster" || src === "ffuf") && ev.caption === "Web Directories";
+                              };
                               const renderEvidenceRow = (ev: PortEvidence, depth: number) => (
                                 <div key={ev.id}>
                                   <div
@@ -3168,6 +3241,30 @@ export default function MissionDetailPage() {
       return (
         <div style={{ padding: 24 }}>
           <p style={{ color: "var(--text-muted)" }}>Select a node from the tree. Right-click for actions.</p>
+        </div>
+      );
+    }
+    if (selectedNode.type === "port-http-methods") {
+      const port = (portsByHost[selectedNode.hostId] ?? []).find((p) => p.id === selectedNode.portId);
+      const methods = (port?.scan_metadata?.http_methods as string[] | undefined) ?? [];
+      const host = hosts.find((x) => x.id === selectedNode.hostId);
+      return (
+        <div style={{ padding: 24 }}>
+          <h2 style={{ margin: "0 0 8px", fontSize: "1.1rem" }}>HTTP methods</h2>
+          {port && host && (
+            <p style={{ color: "var(--text-muted)", marginBottom: 16, fontSize: 14 }}>
+              {port.number}/{port.protocol} on {hostLabel(host)}
+            </p>
+          )}
+          {methods.length === 0 ? (
+            <p style={{ color: "var(--text-muted)" }}>No HTTP methods data for this port.</p>
+          ) : (
+            <ul style={{ margin: 0, paddingLeft: 20 }}>
+              {methods.map((m) => (
+                <li key={m} style={{ marginBottom: 4 }}>{m}</li>
+              ))}
+            </ul>
+          )}
         </div>
       );
     }
@@ -4249,7 +4346,7 @@ export default function MissionDetailPage() {
         <span>{daysRemaining(mission.end_date)} left</span>
         <Link href="/missions" className="theme-link" style={{ marginLeft: "auto" }}>Switch mission</Link>
       </div>
-      <div ref={containerRef} style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+      <div ref={containerRef} style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
         <aside style={treeStyle}>
           <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)", flexShrink: 0, backgroundColor: "var(--tree-bg)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, backgroundColor: "var(--bg-panel)", borderRadius: 6, border: "1px solid var(--border)", padding: "4px 8px" }}>

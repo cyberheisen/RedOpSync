@@ -94,7 +94,14 @@ function getWhoisVal(w: Record<string, unknown> | null | undefined, field: strin
   const v = w[key];
   return v != null ? String(v).trim() : "";
 }
-export type PortLike = { id: string; number: number; protocol: string; state: string | null; service_name: string | null };
+export type PortLike = {
+  id: string;
+  number: number;
+  protocol: string;
+  state: string | null;
+  service_name: string | null;
+  scan_metadata?: { http_methods?: string[] } | null;
+};
 export type EvidenceLike = { id: string; caption: string | null; filename: string; mime: string | null; source: string | null };
 export type VulnInstanceLike = VulnLike & { id: string; definition_title: string | null; host_id: string };
 
@@ -180,7 +187,22 @@ function portMatches(filter: ParsedFilter, p: PortLike): boolean {
   if (attr === "_smart") {
     const search = (vNorm as string) ?? "";
     if (!search) return false;
-    return String(p.number).includes(search) || norm(p.protocol).includes(search) || norm(p.service_name ?? "").includes(search);
+    const httpMethods = p.scan_metadata?.http_methods ?? [];
+    const methodMatch = httpMethods.some((m) => norm(m).includes(search));
+    return (
+      String(p.number).includes(search) ||
+      norm(p.protocol).includes(search) ||
+      norm(p.service_name ?? "").includes(search) ||
+      methodMatch
+    );
+  }
+  if (attr === "method" || attr === "http_methods") {
+    const methods = p.scan_metadata?.http_methods ?? [];
+    const searchStr = (vNorm as string) ?? "";
+    if (filter.op === "==") return methods.some((m) => norm(m) === searchStr);
+    if (filter.op === "!=") return !methods.some((m) => norm(m) === searchStr);
+    if (filter.op === "contains") return methods.some((m) => norm(m).includes(searchStr));
+    return false;
   }
   if (attr === "port" || attr === "port_number") {
     const num = p.number;

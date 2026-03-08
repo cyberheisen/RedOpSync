@@ -50,7 +50,7 @@ export function PortAttachmentsSection({ portId, canEdit, onRefresh }: Props) {
         // Exclude gowitness evidence — it belongs in the tree, not here
         setAttachments((data || []).filter((a) => {
           const src = (a.source || "").toLowerCase();
-          return src !== "gowitness" && src !== "gobuster";
+          return src !== "gowitness" && src !== "gobuster" && src !== "ffuf";
         }));
       })
       .finally(() => setLoading(false));
